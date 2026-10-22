@@ -1,8 +1,10 @@
-# Phase 2 spec: stepper drive (v2, revised after the Codex plan attack of 2026-10-22)
+# Phase 2 spec: stepper drive (v3, after two plan attacks on 2026-10-22)
 
-Acceptance suite first; an implementation must pass it on the host before it is flashed. v1 → v2 changes: cumulative
-closure targets, buffered RX with corruption rejection, one-move-in-flight policy, numeric bounds, a host-testable
-motion controller, `DONE` defined as "released and settled", rate-independent gearbox calibration.
+Acceptance suite first; an implementation must pass it on the host before it is flashed. v1 → v2 (Sol attack):
+cumulative closure targets, buffered RX with corruption rejection, one-move-in-flight policy, numeric bounds, a
+host-testable motion controller, `DONE` defined as "released and settled", rate-independent gearbox calibration.
+v2 → v3 (Astra attack): loss recovery tied to the loss position (queued data flushed), a bound on interrupt-disabled
+sections with a timing test under serial traffic, and a calibration procedure that realigns the physical start.
 
 ## Scope
 
@@ -29,6 +31,11 @@ Motor and ULN2003 `+` from an external 5 V supply, GND common with the Nano.
   drains the ring buffer, feeds the parser, executes commands, prints replies and events. The ISRs never print.
   Shared state crosses the ISR boundary only through `avr_device::interrupt::Mutex<Cell<_>>` or `RefCell`, and
   no wide arithmetic (i64 division) happens inside an ISR or a critical section.
+- Interrupt-latency budget: a critical section only copies or updates a few words (target ≤ 20 µs, hard limit
+  well under one UART byte time of 174 µs at 57600). Formatting and UART writes always run with interrupts
+  enabled, from a snapshot taken in a short critical section; `STATUS`/`POS` never print while holding shared
+  state. Reason: TC2 has a single pending flag, so ticks missed during a long masked section collapse into one
+  and the motion runs slow; a masked RX interrupt overruns the 2-byte UART FIFO.
 
 ## Motion controller (`turntable-core::Controller`, driven by a 1 kHz tick)
 
@@ -65,12 +72,16 @@ Motor and ULN2003 `+` from an external 5 V supply, GND common with the Nano.
   (1..50), `STATUS`.
 - Replies: `OK` on accept, `ERR <BUSY|RANGE|SYNTAX|LINE>` on reject, `DONE <position>` asynchronously when a move
   reaches `Idle`, `POS <position> <k>`; `STATUS` prints state, period, ratio, stops, k. No `HELP` (SRAM).
-- Transport: USART0 RX interrupt fills a 32-byte ring buffer. The ISR records hardware errors (`DOR0`, `FE0`,
-  `UPE0` in `UCSR0A`, read before `UDR0`) and ring overflow in a sticky flag. The `LineAssembler` drops any line
-  that is longer than 24 bytes or that was received while the flag was set, discards through the next `\n`, clears
-  the flag and replies `ERR LINE` once. Rationale: at 57600 a byte arrives every 174 µs and the blocking `ufmt`
-  writer can hold the main loop longer than the 2-byte hardware FIFO survives; a corrupted line must never be
-  executed as a different valid command.
+- Transport: USART0 RX interrupt fills a 32-byte ring buffer. On a hardware error (`DOR0`, `FE0`, `UPE0` in
+  `UCSR0A`, read before `UDR0`) or a ring overflow, the ISR **flushes the whole ring** (nothing received before
+  the loss can execute afterwards, including complete lines that were still queued) and sets a sticky `lost`
+  flag. The `LineAssembler`, on seeing `lost`, clears its partial line and discards bytes until the first `\n`
+  that was received *after* the loss (every byte it sees after the flush is post-loss by construction), replies
+  `ERR LINE` once and resumes. A line longer than 24 bytes is dropped the same way (discard through its `\n`,
+  `ERR LINE`). Rationale: at 57600 a byte arrives every 174 µs and the blocking `ufmt` writer can hold the main
+  loop longer than the 2-byte hardware FIFO survives; a corrupted line must never be executed as a different valid
+  command, and clearing the error at the *next queued* newline would let `STEP -5` with a lost `-` run as
+  `STEP 5` when clean lines were queued ahead of it.
 
 ## Acceptance suite (host `cargo test` in `turntable-core/`, frozen before the rival implementations start)
 
@@ -89,24 +100,32 @@ Motor and ULN2003 `+` from an external 5 V supply, GND common with the Nano.
    match (20/50/100 ms), outputs are all-low after release, a new move accepted during `Settle` is rejected and a
    move accepted after `Idle` restarts from the retained phase, a zero-length move yields exactly one `Done`, and
    every accepted move yields exactly one `Done`.
-5. Transport: the assembler drops a line marked corrupted and the next clean line executes; a 40-byte burst
-   without newline yields one `ERR LINE`; interleaved `DONE` output does not change parsing (simulated).
+5. Transport, tested through the real ring + assembler path with a simulated ISR: with several complete lines
+   queued ahead of a loss that removes the `-` of `STEP -5`, a lost digit, or a lost `\n`, no altered command ever
+   executes (the queued lines are discarded, `ERR LINE` is replied once) and the first clean line received after
+   the loss executes; a 40-byte burst without newline yields one `ERR LINE`; interleaved `DONE` output does not
+   change parsing.
 6. Build: `nano` and `uno` features build with clippy clean; release `.text + .data` ≤ 8 KiB, `.data + .bss`
    ≤ 384 B (ring buffer included).
 
 ## Hardware acceptance (after the suite passes; the first real measurements)
 
-1. Gearbox calibration, rate-independent: `ZERO`, then `STEP 40760` at `SPEED 10`, read the pointer; repeat at
-   `SPEED 4` and `SPEED 2`, twice each, same direction. All six readings must agree within ±0.5°; if the faster
-   runs read short, that is lost steps, not the gearbox: lower the default speed and repeat. The agreed reading
-   decides the constant (10 turns of 4076 = 40760 steps: a 63.68:1 unit overshoots the mark by about 2°, a 64:1
-   unit stops about 17.8° short). Record supply voltage and load.
+1. Gearbox calibration, rate-independent: before **every** run, align the pointer to 0° on the disc with a
+   same-direction approach (`STEP` past it and back onto it), then `ZERO`. Run `STEP 40760` at `SPEED 10`, count
+   the index passes (must be 10) and read the pointer; repeat at `SPEED 4` and `SPEED 2`, twice each. Each run is
+   measured from its own physical start; the six readings must agree within ±0.5°. If the faster runs read short,
+   that is lost steps, not the gearbox: lower the default speed and repeat. The agreed reading decides the constant:
+   40760 steps are 10 turns plus 2.3 half-steps on a 63.68:1 unit (pointer about +0.20° past 0°) and 10 turns minus
+   200 half-steps on a 64:1 unit (pointer about 17.58° short of 0°). Record supply voltage and load.
 2. Positioning: protractor disc, 150 mm pointer, same-direction approach: `ROT 90`, `ROT 10` within ±0.5°,
    measured **after** `DONE` (released); the pointer must not move during a 10 s dwell nor across 10 release/restart
    cycles.
 3. Closure: `STOPS 36`, 360 × `NEXT` (10 turns) returns within ±0.5°; the index mark passes exactly 10 times.
 4. Serial robustness: from the Mac, send 200 commands back to back through the port while moves complete; no
    command executes with a different meaning, every accepted move gets one `DONE`, corrupted lines get `ERR LINE`.
+5. Timing under traffic: `ROT 3600` at `SPEED 2` must take 40758 × 2 ms = 81.5 s ± 0.5 s from `OK` to `DONE`,
+   measured with a stopwatch, once idle and once while `STATUS` is sent every 200 ms from the Mac. A longer time
+   means ticks were lost to masked interrupts.
 
 ## Delivery
 

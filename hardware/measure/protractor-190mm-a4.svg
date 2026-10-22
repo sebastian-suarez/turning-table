@@ -405,6 +405,6 @@
 <circle cx="122.5" cy="148.5" r="2.1" fill="none" stroke="black" stroke-width="0.2" stroke-dasharray="1 1"/>
 <line x1="55" y1="98.5" x2="155" y2="98.5" stroke="black" stroke-width="0.2"/>
 <text x="105" y="96.5" font-family="Helvetica, Arial, sans-serif" font-size="3" text-anchor="middle">100 mm check line: measure it after printing (print at 100%, no scaling)</text>
-<text x="105" y="208.5" font-family="Helvetica, Arial, sans-serif" font-size="3.2" text-anchor="middle">Turntable Phase 2 protractor, 190 mm, 1° ticks, 0° at top, clockwise. 0.5° = 0.83 mm at the rim.</text>
-<text x="105" y="213.5" font-family="Helvetica, Arial, sans-serif" font-size="3.2" text-anchor="middle">Centre hole 5.2 mm for the 28BYJ-48 shaft; dotted circles = its two M4 mounting ears (35 mm apart).</text>
+<text x="105" y="251.5" font-family="Helvetica, Arial, sans-serif" font-size="3.2" text-anchor="middle">Turntable Phase 2 protractor, 190 mm, 1° ticks, 0° at top, clockwise. 0.5° = 0.83 mm at the rim.</text>
+<text x="105" y="256.5" font-family="Helvetica, Arial, sans-serif" font-size="3.2" text-anchor="middle">Centre hole 5.2 mm for the 28BYJ-48 shaft; dotted circles = its two M4 mounting ears (35 mm apart).</text>
 </svg>

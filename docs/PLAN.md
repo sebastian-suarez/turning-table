@@ -1,0 +1,80 @@
+# Plan
+
+Legend: [x] done, [~] in progress, [ ] todo. Written 2026-10-22; decisions recorded 2026-10-22.
+
+## Decisions (2026-10-22)
+
+- **D1 Drive: 28BYJ-48 stepper + ULN2003 driver board** (from the user's kit, identified by appearance; the
+  motor prints "28BYJ-48" on its label and has a 5-wire plug). The SG90 servo is kept for the camera arm tilt or a
+  shutter presser, not for the platter.
+- **D2 Capture: RealityScan on the phone.** Use its **Object Mode** (automatic background removal, made for
+  objects that are rotated or moved between shots; the object must not change shape), not AR Guidance, which
+  expects the phone to move around a static scene. Shutter by hand at each stop, or RealityScan's **Capture
+  Interval Timer** (made for turntable and tripod use) with the table's pause set to the same interval. A hardware
+  trigger is a later option. Source: Epic, RealityScan Mobile 1.8 documentation.
+- **D3 Reconstruction: RealityScan** (processing from the app). Turntable caveat: photogrammetry assumes a static
+  scene; Object Mode's background removal handles it, and a featureless background (plain cloth, lightbox) still
+  helps. RealityScan caps a scan at 300 photos (72 stops × 3 heights = 216 fits). Capture trial: phase 1b.
+- **Mechanical: custom design**, not a downloaded STL: the platter rotates and the camera is raised between rings
+  of photos. Options in Phase 4.
+- **Board confirmed:** chip marking ATMEGA328PB; FTDI USB-serial at `/dev/cu.usbserial-A5069RR4`; bootloader
+  answers at 115200 baud with signature `1E 95 0F` (328P) and not at 57600, so the `nano-new` preset applies.
+
+## Phases
+
+0. **Research** [x] 2026-10-22. `docs/phase-0-research.md`. Toolchain installed; `firmware/` builds for the Nano
+   (atmega328p, 1934 B flash) and a native atmega328pb build was verified.
+1. **Bring-up** [x] 2026-10-22. Chip marking confirmed, port found, bootloader probed (see Decisions),
+   `cargo run` wrote and verified 2088 B and the console showed `turntable-firmware boot` and `tick 0..19` at
+   1 Hz with the D13 LED blinking. Step-by-step commands for a first-time Arduino user: `docs/bring-up.md`.
+1b. **Capture trial** [x] 2026-10-22. Phone on a tripod, RealityScan Object Mode with the Capture Interval Timer,
+   object turned by hand: the user reports a recognisable model. The interval-timer flow is the design basis for
+   Phase 3.
+2. **Stepper drive** [ ]. ULN2003 IN1..IN4 on D2..D5, motor powered from external 5 V (common ground). Half-step
+   sequencer (8-step table) on a TC2 CTC interrupt, non-blocking, coils released after each move; integer error
+   accumulation so N stops add up to exactly one revolution. Commands `STEP <n>`, `ROT <deg>`. First measurement:
+   the gearbox ratio. 28BYJ-48 units come as 63.68395:1 (4075.77 half-steps per revolution) or exactly 64:1
+   (4096); command 10 revolutions with the provisional 4076 and read the error on the protractor disc (17.8° short
+   over 10 turns means the 64:1 variant), then fix the constant. Exit, measured on a printed protractor disc on the
+   shaft with a 150 mm pointer (or a phone photo of a rim marker with the pixels-per-degree stated): a commanded
+   90° and 10°, always approached from the same direction to hide gearbox backlash, land within ±0.5° (about 6
+   half-steps; one half-step is 0.088°, invisible on paper); 10 commanded revolutions produce exactly 10 observed
+   passes of the index mark and return to start within ±0.5°.
+3. **Scan mode, standalone** [ ]. `SCAN <stops> <pause_ms>` steps the platter 360°/stops with a pause matched to
+   RealityScan's interval timer (or a manual tap) and an LED cue; a pushbutton starts or advances; settings kept in
+   EEPROM; the serial console is the UI. `turntable-core/` holds the command parser and motion math with host
+   `cargo test`. A `host/` CLI is optional later (not needed for the RealityScan flow). Exit: a 36-stop scan runs
+   unattended from one command.
+4. **Mechanical, custom** [ ]. Printer: Creality Hi, 260 × 260 × 300 mm. Parametric CAD in `hardware/cad/`
+   (OpenSCAD, STL exported from the command line). Inputs (2026-10-22): the kit has exactly one 28BYJ-48 + ULN2003
+   and one SG90; phones: iPhone Air (165 g, 156.2 × 74.7 × 5.6 mm) or iPhone 18 Pro Max (249 g, 163.4 × 78 ×
+   8.75 mm; reseller listings, not Apple's page), so the clamp takes 74-80 mm width, 5-10 mm thickness and 250 g
+   plus a case; object: a car side-mirror cap, roughly 20-25 cm long.
+   **Camera elevation: option (b), the SG90 arc arm, chosen by the user on 2026-10-22** over the recommendation
+   (manual post now, lead-screw lift later). An SG90 alone (1.8 kg·cm) cannot swing a 250 g phone on a 35 cm arm,
+   so the design makes it work: the arm is **balanced by an adjustable counterweight** behind the pivot (with the
+   servo unplugged the arm must stay wherever it is put), and the SG90 drives it through a **printed 3:1 gear
+   reduction** (180° of servo = 60° of arm, 3× torque, 3× finer angle). Geometry: pivot on a horizontal axis at the
+   object's centre height, arm radius ≈ 35 cm (the iPhone main camera frames a 25 cm object at about half the frame
+   width from there), elevation 5°..65° for three rings (about 10°, 35°, 60°), arm printed in two bolted segments,
+   pivot on an M8 bolt in two 608 bearings, hard stops so the arm cannot swing the phone into the platter. Phone
+   clamp: screw clamp for the range above, lens on the arm's radial line, USB-C cutout. Platter: 250 mm single piece
+   (a two-segment 300 mm variant if the cap needs it), 28BYJ-48 under the hub on a 608 bearing, marker ring on the
+   rim. Firmware impact: `ARM <deg>` command on TC1/D9 with per-rig calibration of pulse width to elevation
+   (Phase 3 scan mode runs K rings × N stops). Exit: assembled rig on external 5 V, strain-relieved cables, arm
+   balanced, Phase 2 acceptance repeated with the platter loaded.
+5. **Scan pipeline** [ ]. RealityScan procedure: Object Mode, Capture Interval Timer matched to the table's pause,
+   featureless background, diffuse fixed lighting, locked phone exposure, 36 stops × 3 heights; compare 24/36/72
+   stops. Target object risk: a painted mirror cap is glossy and uniform, the worst case for photogrammetry
+   (reflections move with the camera, no texture to match). Mitigations, in order: diffuse light (softbox or
+   white tent) to kill reflections; a matte vanishing scanning spray or a dusting of dry shampoo; a few pieces of
+   patterned painter's tape as temporary texture (removed in the model afterwards). Exit: a clean model of the
+   mirror cap and a written procedure.
+6. **Hardening** [ ], optional. Index sensor for homing, calibration in EEPROM, enclosure, CI building the Nano
+   and UNO variants.
+
+## Open questions for the user
+
+- Does the kit contain a second 28BYJ-48 + ULN2003 (for the lift), or should the lift use the SG90 arm?
+- Phone model (weight, dimensions) and the largest object to scan.
+- Printer bed size.

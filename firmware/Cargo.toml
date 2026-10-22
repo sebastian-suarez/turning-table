@@ -1,0 +1,38 @@
+[package]
+name = "turntable-firmware"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "turntable-firmware"
+test = false
+bench = false
+
+[features]
+# Exactly one board feature at a time (arduino-hal rejects two). `cargo build --no-default-features --features uno`.
+default = ["nano"]
+nano = ["arduino-hal/arduino-nano"]
+uno = ["arduino-hal/arduino-uno"]
+
+[dependencies]
+panic-halt = "1.0.0"
+ufmt = "0.2.0"
+
+# arduino-hal is not on crates.io; pin the same revision as the official avr-hal-template.
+[dependencies.arduino-hal]
+git = "https://github.com/rahix/avr-hal"
+rev = "e5c8f37fe48419956e722490a82b9ca9b9fc61a2"
+
+# AVRs have 32 KiB of flash: optimise for size in every profile.
+[profile.dev]
+panic = "abort"
+lto = true
+opt-level = "s"
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+debug = true
+lto = true
+opt-level = "s"

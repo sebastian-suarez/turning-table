@@ -1,0 +1,26 @@
+# ravedude configuration (used by `cargo run`). Docs: https://github.com/Rahix/avr-hal/tree/main/ravedude
+#
+# ravedude cannot auto-detect the USB port of Nano clones (CH340 chips): set `port` below or export
+# RAVEDUDE_PORT=/dev/cu.usbserial-XXXX (list ports with `ls /dev/cu.*`).
+#
+# Which bootloader a clone ships with is unknown until probed (Phase 1). Both presets flash as partno atmega328p:
+#   nano-new -> 115200 baud, Optiboot ("normal" bootloader; the one documented 328PB Nano clone used this)
+#   nano     -> 57600 baud, the "old bootloader"
+# Wrong baud looks like: avrdude "stk500_recv(): programmer is not responding".
+# Confirmed 2026-10-22 on this board: probe at 115200 returned signature 1E 95 0F, 57600 did not respond.
+[general]
+board = "nano-new"
+open-console = true
+serial-baudrate = 57600       # console baud: must match default_serial!() in src/main.rs
+port = "/dev/cu.usbserial-A5069RR4"   # this Nano's FTDI serial number; override with RAVEDUDE_PORT for another board
+
+# If avrdude reports "Device signature = 1E 95 16 (ATmega328PB)" / "expected signature for ATmega328P is 1E 95 0F", the
+# bootloader was built for the 328PB. Delete `board` from [general] above (ravedude refuses `board` there together
+# with a [board] section) and uncomment:
+#
+# [board]
+# inherit = "nano-new"        # or "nano" for a 57600 bootloader
+#
+# [board.avrdude]
+# partno = "atmega328pb"
+# baudrate = 115200            # ravedude requires this key in any [board.avrdude] block; 57600 for `nano`

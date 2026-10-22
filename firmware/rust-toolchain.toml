@@ -1,0 +1,5 @@
+# AVR codegen needs nightly. This is the nightly the avr-hal repo and template pin (known-good LLVM AVR backend).
+[toolchain]
+channel = "nightly-2025-04-27"
+components = ["rust-src", "clippy", "rustfmt", "rust-analyzer"]
+profile = "minimal"

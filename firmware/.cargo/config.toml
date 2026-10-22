@@ -1,0 +1,14 @@
+[build]
+target = "avr-none"
+# avr-none has no default CPU; the Nano's ATmega328PB executes ATmega328P code unchanged
+# (see docs/phase-0-research.md), so the arduino-nano board support is compiled for atmega328p.
+rustflags = ["-C", "target-cpu=atmega328p"]
+rustdocflags = ["-C", "target-cpu=atmega328p"]
+
+[target.'cfg(target_arch = "avr")']
+# `cargo run` -> build, flash with avrdude, open the serial console (configured in Ravedude.toml)
+runner = "ravedude"
+
+[unstable]
+# No prebuilt core for avr-none; build it from rust-src.
+build-std = ["core"]

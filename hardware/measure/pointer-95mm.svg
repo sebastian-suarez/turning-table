@@ -4,5 +4,5 @@
 <circle cx="15" cy="20" r="7" fill="none" stroke="black" stroke-width="0.3"/>
 <polygon points="15,13 110,19.7 110,20.3 15,27" fill="none" stroke="black" stroke-width="0.3"/>
 <line x1="110" y1="20" x2="115" y2="20" stroke="black" stroke-width="0.2"/>
-<text x="65" y="34" font-family="Helvetica, Arial, sans-serif" font-size="2.6" text-anchor="middle">Pointer: cut from card, 95 mm from shaft centre to tip; D-hole fits the 5 mm 28BYJ-48 shaft (press fit, add a drop of glue)</text>
+<text x="65" y="34" font-family="Helvetica, Arial, sans-serif" font-size="2.6" text-anchor="middle">Pointer, card stock: 95 mm centre to tip; D-hole for the 5 mm 28BYJ-48 shaft</text>
 </svg>

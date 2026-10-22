@@ -82,6 +82,16 @@ There is no `cargo test` for the firmware (`[[bin]] test = false`; no test harne
   encoding_rs); 0.8.42 uses `slice::as_chunks`, unstable on this nightly, and fails with E0658. After any
   `cargo update`, re-pin with `cargo update -p encoding_rs --precise 0.8.35`. `Cargo.lock` belongs in git.
 
+## Working agreements (2026-10-22)
+
+- **Learning repository.** The user is new to Arduino and asked for this: comment the code generously (register
+  choices, timer arithmetic, interrupt safety, fixed-point reasoning, why a construct is needed on AVR). This is
+  the user's explicit exception to their no-comments rule.
+- **Commits on `main` are authorized without asking** (spec freezes, review fixes, merges). No AI attribution
+  anywhere, per the user's global rule.
+- **Who writes code.** Codex implements from a spec that has survived an adversarial attack (`docs/phase-N-spec.md`);
+  Claude verifies (tests, builds, hardware acceptance) and reviews the result; no rival implementations.
+
 ## Firmware conventions
 
 - Servo output: avr-hal has no servo driver. Use TC1 (16-bit) in fast PWM mode 14 with ICR1 as TOP for a 50 Hz

@@ -1,12 +1,14 @@
-# Phase 2 spec: stepper drive (short plan, to be attacked before implementation)
+# Phase 2 spec: stepper drive (v2, revised after the Codex plan attack of 2026-10-22)
 
-Written 2026-10-22. Acceptance suite first; the implementation must pass it before the hardware test.
+Acceptance suite first; an implementation must pass it on the host before it is flashed. v1 → v2 changes: cumulative
+closure targets, buffered RX with corruption rejection, one-move-in-flight policy, numeric bounds, a host-testable
+motion controller, `DONE` defined as "released and settled", rate-independent gearbox calibration.
 
 ## Scope
 
 Drive the 28BYJ-48 (5 V, unipolar) through the ULN2003 board from the Nano, with console commands to move by
-half-steps or degrees, so the Phase 3 scan mode can be built on it. Out of scope: scan mode, servo, EEPROM,
-homing sensor, host CLI.
+half-steps or degrees and a stop planner, so the Phase 3 scan mode can be built on it. Out of scope: scan mode,
+servo (`ARM`), EEPROM, homing sensor, host CLI.
 
 ## Hardware interface
 
@@ -18,56 +20,97 @@ homing sensor, host CLI.
 
 Motor and ULN2003 `+` from an external 5 V supply, GND common with the Nano.
 
-## Motion engine (firmware, `firmware/src/stepper.rs`)
+## Architecture
 
-- 8-state half-step table on IN1..IN4: `1000 1100 0100 0110 0010 0011 0001 1001`; direction = index ±1 mod 8.
-  The table index persists across moves and across coil release so re-energising never jumps a step.
-- Timer TC2, CTC mode, prescaler 128 → 125 kHz, `OCR2A = 124` → 1 kHz tick. The ISR advances one half-step
-  every `period_ms` ticks while `remaining > 0`, then decrements. Default `period_ms = 2` (500 half-steps/s,
-  about 7 rpm); `SPEED` sets 1..50 ms. No acceleration ramp in Phase 2 (28BYJ-48 turntables run fine without one
-  at 2 ms; add a ramp only if the loaded platter stalls or skips).
-- Coil release: 50 ms after a move completes, all four outputs low (no holding torque, no heating; platter friction
-  holds position). The `remaining` counter and `position` are shared with the main loop through
-  `avr_device::interrupt::Mutex<Cell<_>>` sections; the ISR never prints.
-- Position: `i32` half-steps from the last `ZERO`; motion math and parsing live in `turntable-core`.
+- `turntable-core/` (`no_std`, no allocator, no `f32`, host-tested): `LineAssembler`, `Command` parser, `Planner`
+  (ratio, degree conversion, cumulative stop targets), `Controller` (tick-driven motion state machine that emits
+  coil patterns and events), `Sequencer` table. Everything that can be wrong lives here.
+- `firmware/`: USART0 RX interrupt → ring buffer; TC2 1 kHz ISR → `Controller::tick()` → PORTD bits; main loop
+  drains the ring buffer, feeds the parser, executes commands, prints replies and events. The ISRs never print.
+  Shared state crosses the ISR boundary only through `avr_device::interrupt::Mutex<Cell<_>>` or `RefCell`, and
+  no wide arithmetic (i64 division) happens inside an ISR or a critical section.
 
-## Motion math and parser (`turntable-core/`, `no_std`, no allocator, tested on the host)
+## Motion controller (`turntable-core::Controller`, driven by a 1 kHz tick)
 
-- `HalfStepsPerRev`: fixed-point hundredths, provisional `407577` (63.68395:1); alternative `409600` (64:1).
-  Compile-time constant in Phase 2, chosen after the Phase 2 ratio measurement; made runtime-configurable in Phase 3.
-- `degrees_to_halfsteps(tenths_of_deg) -> i32` with round-half-away-from-zero.
-- Stop planner: for `N` stops, target of stop `i` is `round(i × hs_per_rev / N)`; each `NEXT` moves the difference,
-  so N stops sum exactly to `round(hs_per_rev)`. The fractional residual of a revolution (0.77 half-step for
-  4075.77) carries in the fixed-point accumulator across revolutions.
-- Parser: one ASCII line per command, `\n`-terminated (`\r` ignored), max 24 bytes, case-insensitive verb.
-  Commands: `STEP <±n>`, `ROT <±deg[.d]>`, `STOPS <n>` (1..720), `NEXT`, `ZERO`, `POS`, `SPEED <ms>`, `STATUS`.
-  Replies: `OK` on accept, `ERR <short reason>` on reject, `DONE <position>` when a move finishes (asynchronous,
-  so Phase 3 and a host can wait for it). No `HELP` text (every literal costs SRAM).
-- Console RX is polled in the main loop in Phase 2 (fine for typed commands; a host sending long lines fast may
-  lose bytes until an RX interrupt with a ring buffer is added, planned for Phase 3).
+- Half-step table on IN1..IN4: `1000 1100 0100 0110 0010 0011 0001 1001`; direction = index ±1 mod 8. The index
+  persists across moves and across release, so re-energising resumes the same phase.
+- Timer: TC2 CTC, prescaler 128 at 16 MHz → 125 kHz, `OCR2A = 124` → 1.000 kHz. One half-step every `period_ms`
+  ticks (1..50, default 2 = 500 half-steps/s ≈ 7.4 rpm). No acceleration ramp in Phase 2; the speed range stays
+  provisional until the loaded platter passes Phase 4 (lower speed or add a ramp then).
+- Move lifecycle: `Idle → Energise (hold the current pattern 20 ms) → Stepping → Hold (50 ms) → Release (all
+  outputs low) → Settle (100 ms) → Idle`, and the `Done` event fires on entering `Idle`. So **`DONE` means: motor
+  de-energised and 100 ms of settling elapsed**, the moment Phase 3 may take the photo. A zero-length move goes
+  `Idle → Idle` and still produces exactly one `Done`. Position is `i32` half-steps, updated per emitted step.
+- One move in flight: `STEP`, `ROT`, `NEXT`, `ZERO`, `STOPS` while not `Idle` → `ERR BUSY`; `POS`, `STATUS`,
+  `SPEED` are always accepted (`SPEED` applies from the next move). Exactly one `DONE` per accepted move, none
+  for rejected commands.
 
-## Acceptance suite (host `cargo test` in `turntable-core/`, must pass before flashing)
+## Planner (`turntable-core::Planner`)
 
-1. Parser: every command round-trips; rejects unknown verbs, missing/extra arguments, out-of-range values,
-   lines over 24 bytes; accepts `rot -7.5`, `ROT 10`, trailing `\r`.
-2. `degrees_to_halfsteps`: 360° → 4076 (ratio 407577) and 4096 (ratio 409600); 90° → 1019 / 1024; 10° → 113 / 114;
-   negative mirrors positive; 0 → 0.
-3. Stop planner closure: for N in {1, 2, 3, 5, 8, 24, 36, 72, 360, 720} and both ratios, the N deltas sum to
-   `round(hs_per_rev)`, every delta is within one half-step of the ideal, and after 10 full revolutions the
-   accumulated position is within one half-step of `10 × hs_per_rev`.
-4. Sequencer: 8 forward then 8 backward indices return to the start; the table has exactly one or two coils on
-   per state and adjacent states differ in exactly one coil.
-5. Firmware builds for `nano` and `uno` features with clippy clean; release `.text + .data` ≤ 8 KiB, `.data + .bss`
-   ≤ 256 B (headroom for Phase 3).
+- `ratio_x100: u32` half-steps per revolution in hundredths; provisional `407577` (63.68395:1), alternative
+  `409600` (64:1); compile-time constant in Phase 2, runtime-configurable in Phase 3.
+- `degrees_to_halfsteps(tenths: i32) -> Option<i32>`: `|tenths| ≤ 36000` (±10 turns), computed in `i64` as
+  `round_half_away(tenths × ratio_x100 / 3600 / 100)`; `None` when out of range.
+- Cumulative stop targets: with `N` stops (1..720) and global stop counter `k` since the planner origin,
+  `target(k) = round(k × ratio_x100 / (N × 100))` in `i64`, and `NEXT` moves `target(k+1) − target(k)`. Hence
+  after 10 revolutions the position is `round(10 × 4075.77) = 40758`, the first revolution totals 4076 and some
+  later ones 4075. `ZERO` sets position = 0 and origin = 0, `k = 0`; `STOPS n` sets `k = 0` with origin = current
+  position. Position is checked arithmetic: a move that would leave `|position| > 2^30` is rejected `ERR RANGE`.
 
-## Hardware acceptance (docs/PLAN.md Phase 2)
+## Console protocol
 
-Protractor disc with a 150 mm pointer, same-direction approach: `ROT 90` and `ROT 10` within ±0.5°; 10 commanded
-revolutions = 10 observed index passes, return within ±0.5°. First run decides the ratio constant (17.8° short
-over 10 turns = the 64:1 unit).
+- Lines end in `\n` (`\r` ignored), at most 24 bytes, ASCII, case-insensitive verb, decimal arguments with
+  optional sign; `ROT` accepts one decimal (`ROT -7.5`), everything else integers. Commands: `STEP <±n>`
+  (|n| ≤ 1 000 000), `ROT <±deg>` (|deg| ≤ 3600), `STOPS <n>` (1..720), `NEXT`, `ZERO`, `POS`, `SPEED <ms>`
+  (1..50), `STATUS`.
+- Replies: `OK` on accept, `ERR <BUSY|RANGE|SYNTAX|LINE>` on reject, `DONE <position>` asynchronously when a move
+  reaches `Idle`, `POS <position> <k>`; `STATUS` prints state, period, ratio, stops, k. No `HELP` (SRAM).
+- Transport: USART0 RX interrupt fills a 32-byte ring buffer. The ISR records hardware errors (`DOR0`, `FE0`,
+  `UPE0` in `UCSR0A`, read before `UDR0`) and ring overflow in a sticky flag. The `LineAssembler` drops any line
+  that is longer than 24 bytes or that was received while the flag was set, discards through the next `\n`, clears
+  the flag and replies `ERR LINE` once. Rationale: at 57600 a byte arrives every 174 µs and the blocking `ufmt`
+  writer can hold the main loop longer than the 2-byte hardware FIFO survives; a corrupted line must never be
+  executed as a different valid command.
+
+## Acceptance suite (host `cargo test` in `turntable-core/`, frozen before the rival implementations start)
+
+1. Parser: every command round-trips; rejects unknown verbs, missing/extra/oversized/non-numeric arguments,
+   values just outside each range, lines of 25 bytes; accepts `rot -7.5`, `ROT 10`, `step +5`, trailing `\r`,
+   `STEP -1000000`, `ROT 3600`, `ROT -3600`.
+2. Degrees: for both ratios, 360° → 4076 / 4096, 90° → 1019 / 1024, 10° → 113 / 114, 3600° → 40758 / 40960,
+   −x mirrors x, 0 → 0, rounding ties documented and tested (e.g. 0.05° × ratio), 3600.1° → `None`.
+3. Planner: for N in {1, 2, 3, 5, 8, 24, 36, 72, 360, 720} and both ratios, 10 × N consecutive `NEXT` deltas sum
+   to `round(10 × ratio)`, every delta is within one half-step of the ideal, the first revolution sums to
+   `round(ratio)`; `ZERO` and `STOPS` reset `k` as specified; a double `NEXT` while busy is rejected and does not
+   advance `k`.
+4. Controller: using the production sequencer and a simulated 1 kHz tick, for periods 1, 2 and 50 and both
+   directions: the emitted patterns follow the table in order with exactly one coil changing per step, the number
+   of emitted steps equals the request, the final position is correct, energise/hold/release/settle durations
+   match (20/50/100 ms), outputs are all-low after release, a new move accepted during `Settle` is rejected and a
+   move accepted after `Idle` restarts from the retained phase, a zero-length move yields exactly one `Done`, and
+   every accepted move yields exactly one `Done`.
+5. Transport: the assembler drops a line marked corrupted and the next clean line executes; a 40-byte burst
+   without newline yields one `ERR LINE`; interleaved `DONE` output does not change parsing (simulated).
+6. Build: `nano` and `uno` features build with clippy clean; release `.text + .data` ≤ 8 KiB, `.data + .bss`
+   ≤ 384 B (ring buffer included).
+
+## Hardware acceptance (after the suite passes; the first real measurements)
+
+1. Gearbox calibration, rate-independent: `ZERO`, then `STEP 40760` at `SPEED 10`, read the pointer; repeat at
+   `SPEED 4` and `SPEED 2`, twice each, same direction. All six readings must agree within ±0.5°; if the faster
+   runs read short, that is lost steps, not the gearbox: lower the default speed and repeat. The agreed reading
+   decides the constant (10 turns of 4076 = 40760 steps: a 63.68:1 unit overshoots the mark by about 2°, a 64:1
+   unit stops about 17.8° short). Record supply voltage and load.
+2. Positioning: protractor disc, 150 mm pointer, same-direction approach: `ROT 90`, `ROT 10` within ±0.5°,
+   measured **after** `DONE` (released); the pointer must not move during a 10 s dwell nor across 10 release/restart
+   cycles.
+3. Closure: `STOPS 36`, 360 × `NEXT` (10 turns) returns within ±0.5°; the index mark passes exactly 10 times.
+4. Serial robustness: from the Mac, send 200 commands back to back through the port while moves complete; no
+   command executes with a different meaning, every accepted move gets one `DONE`, corrupted lines get `ERR LINE`.
 
 ## Delivery
 
-Per the user's routing rule for a spec'd feature with an acceptance suite: one attempt by Claude and one by Codex,
-each in its own git worktree, suite run on both, the passing one kept (Codex's if both pass). Requires an initial
-commit first.
+Per the routing rule for a spec'd feature with an acceptance suite: freeze this spec and the suite in a commit,
+then one implementation by Claude and one by Codex, each in its own worktree branched from that commit; run the
+suite and the build checks on both; flash and run the hardware acceptance on the survivor(s); keep the one that
+passes, Codex's if both do. One retry each if neither passes, then stop and ask.

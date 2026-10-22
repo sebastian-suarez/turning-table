@@ -89,8 +89,9 @@ There is no `cargo test` for the firmware (`[[bin]] test = false`; no test harne
   the user's explicit exception to their no-comments rule.
 - **Commits on `main` are authorized without asking** (spec freezes, review fixes, merges). No AI attribution
   anywhere, per the user's global rule.
-- **Who writes code.** Codex implements from a spec that has survived an adversarial attack (`docs/phase-N-spec.md`);
-  Claude verifies (tests, builds, hardware acceptance) and reviews the result; no rival implementations.
+- **Who writes code.** Codex implements from a spec that has survived an adversarial attack (`docs/phase-N-spec.md`),
+  at `max` effort (or `ultra`), launched with `codex exec` directly because the plugin wrapper caps effort at
+  `xhigh`; Claude verifies (tests, builds, hardware acceptance) and reviews the result; no rival implementations.
 
 ## Firmware conventions
 

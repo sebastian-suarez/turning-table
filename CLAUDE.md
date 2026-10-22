@@ -7,10 +7,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 A 3D-printed turntable for 3D scanning (photogrammetry), driven by an Arduino Nano clone whose MCU is an
 **ATmega328PB** (fallback board on hand: Arduino UNO, ATmega328P). Firmware is Rust on `avr-hal`, built and
 flashed from the command line only; the Arduino IDE is never used. Platter drive is a 28BYJ-48 stepper on a ULN2003
-board; an SG90 servo swings a counterweighted camera arc arm through a 3:1 printed gear; capture and
-reconstruction are RealityScan on the phone (Object Mode, interval timer); the mechanical design is custom, as
-parametric OpenSCAD in `hardware/cad/`, printed on a Creality Hi (260 × 260 × 300 mm). Decisions and phases:
-`docs/PLAN.md`.
+board; a second 28BYJ-48 swings a counterweighted camera arc arm through a printed ~8:1 reduction (the SG90 from
+the kit is a spare); capture and reconstruction are RealityScan on the phone (Object Mode, interval timer); the
+mechanical design is custom, as parametric OpenSCAD in `hardware/cad/`, printed on a Creality Hi
+(260 × 260 × 300 mm). Decisions and phases: `docs/PLAN.md`; parts: `hardware/BOM.md`.
 
 - `firmware/` is the `no_std` crate flashed to the board. It owns its `rust-toolchain.toml`, `.cargo/config.toml`
   and `Ravedude.toml`. Keep those inside `firmware/`: the planned host-side crates (`turntable-core/`, `host/`)
@@ -96,13 +96,15 @@ There is no `cargo test` for the firmware (`[[bin]] test = false`; no test harne
 
 ## Firmware conventions
 
-- Servo output: avr-hal has no servo driver. Use TC1 (16-bit) in fast PWM mode 14 with ICR1 as TOP for a 50 Hz
-  frame; hardware outputs exist only on D9 (OC1A) and D10 (OC1B). Reference:
+- Servo output (only if the spare SG90 is ever wired): avr-hal has no servo driver. Use TC1 (16-bit) in fast PWM
+  mode 14 with ICR1 as TOP for a 50 Hz frame; the hardware output is D9 (OC1A) (D10/OC1B is taken by the arm
+  stepper). Reference:
   `examples/arduino-uno/src/bin/uno-manual-servo.rs` in avr-hal (prescaler 64, ICR1 = 4999, 4 µs per count).
   Prescaler 8 with ICR1 = 39999 gives 0.5 µs resolution. TC0 stays free for a millis tick; TC2 drives the stepper
   (next bullet).
-- Stepper: 28BYJ-48 through ULN2003, IN1..IN4 on D2..D5 (PD2..PD5), 8-entry half-step table stepped from a TC2
-  CTC interrupt (1 ms tick, step period in ticks), coils released when idle. Half-steps per revolution is one
+- Steppers: 28BYJ-48 through ULN2003, platter IN1..IN4 on D2..D5 (PD2..PD5), arm IN1..IN4 on D6, D7, D8, D10
+  (PD6, PD7, PB0, PB2; D9/OC1A stays reserved for an optional servo), both as instances of the same controller
+  stepped from one TC2 CTC interrupt (1 ms tick, step period in ticks), coils released when idle. Half-steps per revolution is one
   named constant, measured in Phase 2, not assumed: 28BYJ-48 units ship with either a 63.68395:1 gearbox
   (4075.77 half-steps) or an exact 64:1 one (4096); the wrong constant drifts 1.78° per revolution. Accumulate
   the fractional remainder in integers across stops so N stops close exactly. Motor and servo power from an

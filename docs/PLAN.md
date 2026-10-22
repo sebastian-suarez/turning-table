@@ -5,8 +5,8 @@ Legend: [x] done, [~] in progress, [ ] todo. Written 2026-10-22; decisions recor
 ## Decisions (2026-10-22)
 
 - **D1 Drive: 28BYJ-48 stepper + ULN2003 driver board** (from the user's kit, identified by appearance; the
-  motor prints "28BYJ-48" on its label and has a 5-wire plug). The SG90 servo is kept for the camera arm tilt or a
-  shutter presser, not for the platter.
+  motor prints "28BYJ-48" on its label and has a 5-wire plug). A second one, bought 2026-10-22, drives the camera
+  arm (Phase 4). The SG90 servo is a spare: shutter presser or clamp tilt if ever needed.
 - **D2 Capture: RealityScan on the phone.** Use its **Object Mode** (automatic background removal, made for
   objects that are rotated or moved between shots; the object must not change shape), not AR Guidance, which
   expects the phone to move around a static scene. Shutter by hand at each stop, or RealityScan's **Capture
@@ -40,9 +40,11 @@ Legend: [x] done, [~] in progress, [ ] todo. Written 2026-10-22; decisions recor
    90° and 10°, always approached from the same direction to hide gearbox backlash, land within ±0.5° (about 6
    half-steps; one half-step is 0.088°, invisible on paper); 10 commanded revolutions produce exactly 10 observed
    passes of the index mark and return to start within ±0.5°.
-3. **Scan mode, standalone** [ ]. `SCAN <stops> <pause_ms>` steps the platter 360°/stops with a pause matched to
-   RealityScan's interval timer (or a manual tap) and an LED cue; a pushbutton starts or advances; settings kept in
-   EEPROM; the serial console is the UI. `turntable-core/` holds the command parser and motion math with host
+3. **Scan mode, standalone** [ ]. Second axis first: the arm stepper on D6, D7, D8, D10 as a second controller
+   instance with `ARM <deg>` (through the 8:1 reduction) and its own calibration. Then `SCAN <rings> <stops>
+   <pause_ms>` runs K ring angles × N platter stops with a pause matched to RealityScan's interval timer (or a
+   manual tap) and an LED cue; a pushbutton starts or advances; settings kept in EEPROM; the serial console is
+   the UI. `turntable-core/` holds the command parser and motion math with host
    `cargo test`. A `host/` CLI is optional later (not needed for the RealityScan flow). Exit: a 36-stop scan runs
    unattended from one command.
 4. **Mechanical, custom** [ ]. Printer: Creality Hi, 260 × 260 × 300 mm. Parametric CAD in `hardware/cad/`
@@ -50,19 +52,22 @@ Legend: [x] done, [~] in progress, [ ] todo. Written 2026-10-22; decisions recor
    and one SG90; phones: iPhone Air (165 g, 156.2 × 74.7 × 5.6 mm) or iPhone 18 Pro Max (249 g, 163.4 × 78 ×
    8.75 mm; reseller listings, not Apple's page), so the clamp takes 74-80 mm width, 5-10 mm thickness and 250 g
    plus a case; object: a car side-mirror cap, roughly 20-25 cm long.
-   **Camera elevation: option (b), the SG90 arc arm, chosen by the user on 2026-10-22** over the recommendation
-   (manual post now, lead-screw lift later). An SG90 alone (1.8 kg·cm) cannot swing a 250 g phone on a 35 cm arm,
-   so the design makes it work: the arm is **balanced by an adjustable counterweight** behind the pivot (with the
-   servo unplugged the arm must stay wherever it is put), and the SG90 drives it through a **printed 3:1 gear
-   reduction** (180° of servo = 60° of arm, 3× torque, 3× finer angle). Geometry: pivot on a horizontal axis at the
-   object's centre height, arm radius ≈ 35 cm (the iPhone main camera frames a 25 cm object at about half the frame
-   width from there), elevation 5°..65° for three rings (about 10°, 35°, 60°), arm printed in two bolted segments,
-   pivot on an M8 bolt in two 608 bearings, hard stops so the arm cannot swing the phone into the platter. Phone
-   clamp: screw clamp for the range above, lens on the arm's radial line, USB-C cutout. Platter: 250 mm single piece
-   (a two-segment 300 mm variant if the cap needs it), 28BYJ-48 under the hub on a 608 bearing, marker ring on the
-   rim. Firmware impact: `ARM <deg>` command on TC1/D9 with per-rig calibration of pulse width to elevation
-   (Phase 3 scan mode runs K rings × N stops). Exit: assembled rig on external 5 V, strain-relieved cables, arm
-   balanced, Phase 2 acceptance repeated with the platter loaded.
+   **Camera elevation: a second 28BYJ-48 on an arc arm** (decided 2026-10-22, replacing the SG90 arm chosen earlier
+   the same day after comparing torque, dead band and code reuse; the SG90 becomes a spare for a shutter presser or a
+   clamp tilt). The arm is balanced by an adjustable counterweight behind the pivot (with the motor unplugged it
+   must stay wherever it is put) and driven through a **printed ~8:1 reduction** (spur pair, or a worm if
+   self-locking matters): about 2.8 kg·cm at the arm, 60° in roughly 5 s, 0.011° per half-step, same driver code as
+   the platter. Geometry: pivot on a horizontal axis at the object's centre height, arm radius ≈ 35 cm (the iPhone
+   main camera frames a 25 cm object at about half the frame width from there), elevation 5°..65° for three rings
+   (about 10°, 35°, 60°), arm printed in two bolted segments, pivot on an M8 partially threaded bolt in two 608ZZ
+   bearings with printed spacers, hard stops so the arm cannot swing the phone into the platter, an index marker or
+   switch for homing the arm if open-loop drift shows. Phone clamp: screw clamp for the range above, lens on the
+   arm's radial line, USB-C cutout. Platter: 250 mm single piece (a two-segment 300 mm variant if the cap needs it),
+   hub on two stacked 608ZZ so the motor shaft carries no platter weight, marker ring on the rim. Parts:
+   `hardware/BOM.md`. Firmware impact: second ULN2003 on D6, D7, D8, D10 (D9 stays reserved for an optional servo),
+   a second controller instance in the same 1 kHz tick, `ARM <deg>` command (Phase 3 scan mode runs K rings × N
+   stops). Exit: assembled rig on external 5 V, strain-relieved cables, arm balanced, Phase 2 acceptance repeated
+   with the platter loaded, and the three ring angles repeatable within ±0.5°.
 5. **Scan pipeline** [ ]. RealityScan procedure: Object Mode, Capture Interval Timer matched to the table's pause,
    featureless background, diffuse fixed lighting, locked phone exposure, 36 stops × 3 heights; compare 24/36/72
    stops. Target object risk: a painted mirror cap is glossy and uniform, the worst case for photogrammetry

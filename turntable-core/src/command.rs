@@ -20,6 +20,9 @@ impl Command {
         !matches!(self, Self::Pos | Self::Status | Self::Speed(_))
     }
 
+    // On AVR, keep parser temporaries out of the main loop's RX/event frame.
+    // Sharing this call avoids register spills and saves flash, with no heap.
+    #[inline(never)]
     pub fn parse(line: &[u8]) -> Result<Self, Error> {
         // Normally LineAssembler has already ignored CR. Accept a terminal CR
         // here too, so parsing a single CRLF console line works on its own.

@@ -31,20 +31,20 @@ impl LineAssembler {
     ///
     /// Report an error as soon as it is detected, including a burst with no
     /// newline (the frozen acceptance case). Remain in discard mode afterwards
-    /// and suppress repeat errors until LF, even if more errors are observed.
+    /// and suppress extra length errors until LF. Each `corrupted` item is a
+    /// distinct RX loss notice, so it still owns its own ERR LINE while dropping.
     pub fn push(&mut self, byte: u8, corrupted: bool) -> Option<Result<&[u8], Error>> {
-        let new_error = corrupted && !self.discarding;
-        self.discarding |= corrupted;
+        if corrupted {
+            self.len = 0;
+            self.discarding = byte != b'\n';
+            return Some(Err(Error::Line));
+        }
         if self.discarding {
             if byte == b'\n' {
                 self.discarding = false;
                 self.len = 0;
             }
-            return if new_error {
-                Some(Err(Error::Line))
-            } else {
-                None
-            };
+            return None;
         }
         match byte {
             b'\r' => None,

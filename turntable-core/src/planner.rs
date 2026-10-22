@@ -105,8 +105,12 @@ impl Planner {
             }
             Command::Next => {
                 let k = self.k.checked_add(1).ok_or(Error::Range)?;
-                let steps = self.target(k).ok_or(Error::Range)?
-                    - self.target(self.k).ok_or(Error::Range)?;
+                // Stay on the original absolute grid after a manual STEP/ROT.
+                // Work in i64 so origin + target and subtraction are checked
+                // before narrowing; target()'s rounded result leaves ample
+                // room for either i32 coordinate in this signed intermediate.
+                let steps = i64::from(self.origin) + self.target(k).ok_or(Error::Range)?
+                    - i64::from(motion.position);
                 PreparedCommand::Next {
                     steps: i32::try_from(steps).map_err(|_| Error::Range)?,
                     k,
@@ -138,7 +142,8 @@ impl Planner {
     }
 
     /// Called by main only after Controller::apply accepted the same prepared
-    /// command. The ISR never touches this planner or performs its i64 maths.
+    /// command, in the same loss-generation-checked critical section. This
+    /// only copies k/origin/stops; the ISR never performs the planner's i64 maths.
     pub fn commit(&mut self, command: PreparedCommand) {
         match command {
             PreparedCommand::Next { k, .. } => self.k = k,

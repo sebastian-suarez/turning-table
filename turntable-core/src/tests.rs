@@ -8,15 +8,15 @@ use crate::{
     planner::round_half_away,
     sequencer::HALF_STEPS,
     Command, Controller, Direction, Error, LineAssembler, Output, Planner, PreparedCommand,
-    RxBuffer, Sequencer, Snapshot, State, RATIO_X100,
+    RxBuffer, RxItem, Sequencer, Snapshot, State, RATIO_X100,
 };
 
 fn planner(ratio: u32, stops: u16) -> Planner {
     Planner::new(ratio, stops).unwrap()
 }
 
-/// This is the firmware's prepare / atomic apply / commit transaction. Planning
-/// is separate so firmware never puts the i64 operations inside its mutex.
+/// Prepare with interrupts enabled, then apply/commit inside firmware's mutex.
+/// Transport tests below also exercise the production RX generation guard.
 fn execute(
     planner: &mut Planner,
     controller: &mut Controller,
@@ -417,7 +417,6 @@ fn planner_busy_and_range_rejections_are_transactional() {
         (-POSITION_LIMIT, Command::Step(-1)),
         (POSITION_LIMIT, Command::Rot(1)),
         (-POSITION_LIMIT, Command::Rot(-1)),
-        (POSITION_LIMIT, Command::Next),
     ] {
         let before = (planner.k(), planner.origin(), planner.stops());
         let snapshot = Snapshot {
@@ -428,6 +427,19 @@ fn planner_busy_and_range_rejections_are_transactional() {
         assert_eq!(planner.prepare(command, snapshot), Err(Error::Range));
         assert_eq!((planner.k(), planner.origin(), planner.stops()), before);
     }
+    // Absolute NEXT may legitimately move backwards from the positive limit
+    // onto an earlier grid point. To test an out-of-range grid, rebase it at
+    // the limit first, so the *destination* of NEXT lies beyond the limit.
+    let at_limit = Snapshot {
+        state: State::Idle,
+        position: POSITION_LIMIT,
+        period_ms: 2,
+    };
+    let stops = planner.prepare(Command::Stops(36), at_limit).unwrap();
+    planner.commit(stops);
+    assert_eq!(planner.prepare(Command::Next, at_limit), Err(Error::Range));
+    assert_eq!(planner.k(), 0);
+    assert_eq!(planner.origin(), POSITION_LIMIT);
     assert_eq!(
         Controller::checked_destination(POSITION_LIMIT - 1, 1),
         Ok(POSITION_LIMIT)
@@ -450,7 +462,7 @@ fn planner_busy_and_range_rejections_are_transactional() {
 }
 
 #[test]
-fn planner_next_keeps_the_specified_delta_after_manual_motion() {
+fn planner_next_returns_to_the_absolute_grid_after_manual_motion() {
     let mut planner = planner(RATIO_X100, 3);
     let snapshot = Snapshot {
         state: State::Idle,
@@ -468,7 +480,43 @@ fn planner_next_keeps_the_specified_delta_after_manual_motion() {
             },
         )
         .unwrap();
-    assert_eq!(second, PreparedCommand::Next { steps: 1358, k: 2 });
+    // target(2) = 2717; return from -1234 to that absolute coordinate.
+    assert_eq!(second, PreparedCommand::Next { steps: 3951, k: 2 });
+}
+
+#[test]
+fn manual_step_five_between_nexts_is_absorbed_and_the_revolution_closes() {
+    for ratio in [407_577, 409_600] {
+        for stops in [2, 3, 5, 8, 24, 36, 72, 360, 720] {
+            let mut planner = planner(ratio, stops);
+            let mut controller = Controller::new();
+            execute(&mut planner, &mut controller, Command::Step(17)).unwrap();
+            finish(&mut controller);
+            execute(&mut planner, &mut controller, Command::Stops(stops)).unwrap();
+            assert_eq!(planner.origin(), 17);
+            execute(&mut planner, &mut controller, Command::Next).unwrap();
+            finish(&mut controller);
+            execute(&mut planner, &mut controller, Command::Step(5)).unwrap();
+            finish(&mut controller);
+            assert_eq!(planner.k(), 1);
+
+            for k in 2..=u32::from(stops) {
+                let output = execute(&mut planner, &mut controller, Command::Next).unwrap();
+                // At dense grids, STEP 5 can already land exactly on the next
+                // rounded stop. A zero-distance NEXT completes immediately.
+                let position = output.done.unwrap_or_else(|| finish(&mut controller));
+                let denominator = i64::from(stops) * 100;
+                // Independent rational oracle, including a nonzero origin.
+                let target = (i64::from(k) * i64::from(ratio) + denominator / 2) / denominator;
+                assert_eq!(i64::from(position), 17 + target);
+                assert_eq!(planner.k(), k);
+            }
+            assert_eq!(
+                controller.snapshot().position,
+                17 + ((ratio + 50) / 100) as i32
+            );
+        }
+    }
 }
 
 #[test]
@@ -841,19 +889,244 @@ fn hardware_error_newline_is_not_a_trustworthy_recovery_delimiter() {
 }
 
 #[test]
-fn an_error_after_dequeuing_a_complete_line_cannot_modify_that_command() {
-    let mut rx = RxBuffer::new();
-    let mut assembler = LineAssembler::new();
-    for &byte in b"STEP 10\n" {
-        rx.receive(byte, false);
+fn loss_during_done_output_after_dequeuing_the_completing_lf_rejects_the_line() {
+    let mut console = RxConsole::new();
+    // Complete an earlier accepted move, leaving DONE for main to print after
+    // it pops the next input byte, exactly as the firmware loop does.
+    execute(
+        &mut console.planner,
+        &mut console.controller,
+        Command::Step(2),
+    )
+    .unwrap();
+    let done = finish(&mut console.controller);
+    console.receive(b"NEXT");
+    console.drain();
+    console.receive(b"\n");
+    let newline = console.rx.pop().unwrap();
+    assert_eq!(newline.byte, b'\n');
+
+    let mut tx = String::new();
+    for (index, byte) in format!("DONE {done}\r\n").bytes().enumerate() {
+        tx.push(char::from(byte));
+        if index == 2 {
+            console.rx.receive(b'X', true); // ISR runs during blocking TX
+        }
     }
-    let completed = drain(&mut rx, &mut assembler);
-    // Simulate an RX ISR between dequeue/parse and dispatch of the complete
-    // command. This error belongs to a later line; the parsed value is owned.
-    rx.receive(b'9', true);
-    rx.receive(b'\n', false);
-    assert_eq!(completed, vec![Ok(Command::Step(10))]);
-    assert_eq!(drain(&mut rx, &mut assembler), vec![Err(Error::Line)]);
+    console.process(newline);
+    assert_eq!(tx, "DONE 2\r\n");
+    assert_eq!(console.controller.snapshot().position, 2);
+    assert_eq!(console.controller.snapshot().state, State::Idle);
+    assert_eq!(console.planner.k(), 0, "stale NEXT must not commit k");
+    console.assert_recovery(1, 2);
+}
+
+#[test]
+fn loss_between_parse_and_acceptance_cannot_update_motion_or_planner() {
+    // Exercise every command category, including planner-only mutations and
+    // read-only replies. Stale commands own no reply and no extra ERR LINE.
+    for line in [
+        &b"STEP 10\n"[..],
+        &b"ROT 90\n"[..],
+        &b"NEXT\n"[..],
+        &b"ZERO\n"[..],
+        &b"STOPS 3\n"[..],
+        &b"SPEED 50\n"[..],
+        &b"POS\n"[..],
+        &b"STATUS\n"[..],
+    ] {
+        let mut console = RxConsole::new();
+        execute(
+            &mut console.planner,
+            &mut console.controller,
+            Command::Step(2),
+        )
+        .unwrap();
+        finish(&mut console.controller);
+        let before = console.controller.snapshot();
+        let planner_before = (
+            console.planner.k(),
+            console.planner.stops(),
+            console.planner.origin(),
+        );
+        console.receive(line);
+        let (command, generation) = loop {
+            let item = console.rx.pop().unwrap();
+            if let Some(parsed) = feed(&mut console.assembler, item.byte, item.corrupted) {
+                break (parsed, item.generation);
+            }
+        };
+        // Fixed-point preparation is deliberately outside the critical
+        // section; the ISR can flush during that time too.
+        let prepared = command.and_then(|command| console.planner.prepare(command, before));
+        console.rx.receive(b'9', true);
+        let accepted = console.rx.accept_if_current(generation, || {
+            let prepared = prepared.unwrap();
+            console.controller.apply(prepared).unwrap();
+            console.planner.commit(prepared);
+        });
+        assert_eq!(accepted, None);
+        assert_eq!(console.controller.snapshot(), before);
+        assert_eq!(
+            (
+                console.planner.k(),
+                console.planner.stops(),
+                console.planner.origin()
+            ),
+            planner_before
+        );
+        console.assert_recovery(1, 2);
+    }
+}
+
+/// A simulated main/ISR boundary using the production ring, assembler, parser,
+/// generation guard, planner and controller. The test owns all objects instead
+/// of an AVR mutex, so a test can pause main at a precisely chosen byte.
+struct RxConsole {
+    rx: RxBuffer,
+    assembler: LineAssembler,
+    planner: Planner,
+    controller: Controller,
+    events: Vec<Result<Command, Error>>,
+}
+
+impl RxConsole {
+    fn new() -> Self {
+        Self {
+            rx: RxBuffer::new(),
+            assembler: LineAssembler::new(),
+            planner: planner(RATIO_X100, 36),
+            controller: Controller::new(),
+            events: Vec::new(),
+        }
+    }
+
+    fn receive(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            self.rx.receive(byte, false);
+        }
+    }
+
+    fn process(&mut self, item: RxItem) {
+        if let Some(parsed) = feed(&mut self.assembler, item.byte, item.corrupted) {
+            if item.corrupted {
+                self.events.push(Err(Error::Line));
+                return;
+            }
+            let prepared = parsed
+                .and_then(|command| self.planner.prepare(command, self.controller.snapshot()));
+            // This closure is indivisible on AVR because main holds the RX
+            // mutex from comparison through both controller/planner updates.
+            if let Some(result) = self.rx.accept_if_current(item.generation, || {
+                let prepared = prepared?;
+                self.controller.apply(prepared)?;
+                self.planner.commit(prepared);
+                parsed
+            }) {
+                self.events.push(result);
+            }
+        }
+    }
+
+    fn drain(&mut self) {
+        while let Some(item) = self.rx.pop() {
+            self.process(item);
+        }
+    }
+
+    fn assert_recovery(&mut self, losses: usize, position_before: i32) {
+        self.drain();
+        assert_eq!(self.events, vec![Err(Error::Line); losses]);
+        assert!(self.rx.has_error());
+        assert_eq!(self.controller.snapshot().position, position_before);
+        assert_eq!(self.controller.snapshot().state, State::Idle);
+        self.receive(b"\nSTEP 3\n");
+        self.drain();
+        assert!(!self.rx.has_error());
+        let mut expected = vec![Err(Error::Line); losses];
+        expected.push(Ok(Command::Step(3)));
+        assert_eq!(self.events, expected);
+        assert_eq!(finish(&mut self.controller), position_before + 3);
+    }
+}
+
+#[test]
+fn lost_minus_digit_or_lf_flushes_three_complete_queued_commands() {
+    for damaged in *b"-0\n" {
+        let mut console = RxConsole::new();
+        // All three queued commands would mutate state if a stale delimiter
+        // let them execute. Stay below 32 bytes to isolate the hardware fault.
+        console.receive(b"STEP 1\nZERO\nNEXT\n");
+        match damaged {
+            b'-' => console.receive(b"STEP "),
+            b'0' => console.receive(b"STEP 1"),
+            b'\n' => console.receive(b"STEP 1"),
+            _ => unreachable!(),
+        }
+        // The lost byte never reaches the ISR; DOR0 flags the next real byte.
+        // A missing LF is detected on the next line's first byte, not on LF.
+        let next_byte = match damaged {
+            b'-' => b'5',
+            b'0' => b'\n',
+            b'\n' => b'P',
+            _ => unreachable!(),
+        };
+        console.rx.receive(next_byte, true);
+        console.receive(if damaged == b'\n' { b"OS" } else { b"" });
+        console.assert_recovery(1, 0);
+        assert_eq!(console.planner.k(), 0);
+        assert_eq!(console.planner.origin(), 0);
+    }
+}
+
+#[test]
+fn lost_minus_after_consumed_pos_and_step_prefix_cannot_execute_positive_step() {
+    let mut console = RxConsole::new();
+    console.receive(b"POS\nSTEP ");
+    console.drain();
+    assert_eq!(console.events, vec![Ok(Command::Pos)]);
+    console.events.clear();
+    console.rx.receive(b'5', true); // '-' was lost after main consumed STEP's prefix
+    console.assert_recovery(1, 0);
+}
+
+#[test]
+fn lost_lf_after_consumed_step_one_drops_the_next_lines_first_dor_byte() {
+    let mut console = RxConsole::new();
+    console.receive(b"STEP 1");
+    console.drain();
+    console.rx.receive(b'P', true); // LF lost; the next line was POS\n
+    console.receive(b"OS");
+    console.assert_recovery(1, 0);
+}
+
+#[test]
+fn two_faults_with_no_clean_line_between_each_get_an_error() {
+    for drain_first_notice in [false, true] {
+        let mut console = RxConsole::new();
+        console.receive(b"STEP 1");
+        console.rx.receive(b'9', true);
+        console.receive(b"\nSTEP 5"); // recovered LF, but no accepted clean line
+        if drain_first_notice {
+            console.drain(); // consume first notice, LF and new partial prefix
+        }
+        console.rx.receive(b'9', true);
+        console.assert_recovery(2, 0);
+    }
+}
+
+#[test]
+fn a_second_fault_before_recovery_lf_also_gets_its_own_error() {
+    for drain_first_notice in [false, true] {
+        let mut console = RxConsole::new();
+        console.receive(b"STEP 1");
+        console.rx.receive(b'9', true);
+        if drain_first_notice {
+            console.drain(); // assembler is still discarding; no LF yet
+        }
+        console.rx.receive(b'8', true);
+        console.assert_recovery(2, 0);
+    }
 }
 
 #[test]

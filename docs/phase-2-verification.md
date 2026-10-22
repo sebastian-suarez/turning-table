@@ -1,161 +1,181 @@
 # Phase 2 implementation verification
 
-Verified on 2026-10-22 against the frozen v2 specification, starting from
-`bfaea880c452b4004efdfed1b7c168514497eb0e`. Hardware acceptance remains for the
-maintainer: no flashing, bootloader probing or serial-port access was performed.
-No commit was created.
+Fix pass verified on 2026-10-22 against `docs/phase-2-spec.md` **v3.2** at
+`54aaa40`, including the v3.1 atomic-acceptance requirement at `c0e2c38`. The
+implementation being corrected starts at `19f47ca`. This report supersedes the
+previous v2-only report.
 
-The requested scope is **v2 at bfaea88**. During implementation an external
-process advanced HEAD through `437f446` to `de94c98`, updating `CLAUDE.md` and the
-specification to v3. Those commits are preserved. This report and implementation
-are assessed against the originally requested v2, retrieved from `bfaea88`, rather
-than silently expanding scope to the newly committed v3.
+All requested host/build checks pass. Hardware acceptance and independent
+verification/reviews remain with the maintainer. This pass ran no reviews or
+review scripts, created no commit, and performed no flashing, bootloader probing
+or serial-device access.
 
-## Results
+## Behavioural changes
 
-Inside `turntable-core/`, plain `cargo test` passes **26 tests**, with **0 failed**,
-and 0 doc tests. The crate uses stable host Rust, has no dependencies, and does
-not inherit the firmware's AVR configuration. There is no root Cargo manifest or
-workspace.
+1. Every hardware-error or overflow flush increments a wrapping **u32 RX loss
+   generation**. Each dequeued byte carries its generation through assembly,
+   parsing and preparation. `RxBuffer::accept_if_current` compares it while
+   firmware holds the same interrupt mutex that applies the controller command
+   and commits the planner. A loss during blocking DONE output, parsing or
+   fixed-point preparation therefore invalidates the pending command, including
+   ZERO/STOPS/SPEED and POS/STATUS replies. A stale command produces no reply or
+   motion; the loss notice supplies its ERR LINE. Already accepted moves and
+   their position-bearing DONE events remain valid.
+2. Flushes have separate notices, including two faults before main drains either
+   notice, two faults without an accepted clean line between, and a second fault
+   before recovery LF. Each produces exactly one ERR LINE. Consuming recovery LF
+   does not duplicate it. A notice immediately clears the assembler's partial
+   line; input is discarded through a trustworthy post-loss LF, then the first
+   following clean line can execute. Overlong lines still produce one length
+   error and discard through LF.
+3. Controller application, planner commit and reply snapshots are bounded state
+   operations inside a short critical section. Parsing, i64 planning, formatting
+   and every UART write run with interrupts enabled. POS/STATUS print the copied
+   motion snapshot and main-only planner values after releasing the mutex.
+4. TC2 now drives activity LED PB5 next to the coil write. Main configures D13
+   before enabling interrupts and never writes PORTB afterwards. The LED follows
+   the timer's active state, including energise/hold/settle, at 1 ms resolution.
+   This avoids reverting future PB0/PB2 arm-coil writes with a main-loop PORTB
+   read-modify-write. All pin assignments are unchanged.
+5. NEXT now moves by `origin + target(k+1) - position`, as required by v3.2.
+   Manual STEP/ROT no longer shifts the stop grid. ZERO still resets position,
+   origin and k; STOPS still rebases the origin at the current position and
+   resets k. A correction can be backwards or zero; a zero-distance NEXT still
+   advances k and produces one immediate DONE after OK.
+6. Parser and dispatcher use separate function frames to reduce AVR register
+   spills and flash use. Replies use the prepared-command tag, avoiding retention
+   of the original parser result across planning. These are size/layout changes
+   with no extra protocol behaviour.
 
-Both firmware release builds pass:
+## Verification results
+
+Inside `turntable-core/`, plain `cargo test` passes **34 tests**, **0 failed**,
+and 0 doc tests. The crate remains dependency-free, no_std and independent of the
+firmware's target and nightly. These commands also pass:
 
 ```sh
-cd firmware
-cargo build --release
-avr-size -A target/avr-none/release/turntable-firmware.elf
-cargo build --release --no-default-features --features uno
-avr-size -A target/avr-none/release/turntable-firmware.elf
-```
-
-| Build | .text | .data | .bss | Flash (.text + .data) | Static SRAM (.data + .bss) |
-|---|---:|---:|---:|---:|---:|
-| Nano (default) | 7850 B | 192 B | 60 B | 8042 / 8192 B | 252 / 384 B |
-| UNO | 7850 B | 192 B | 60 B | 8042 / 8192 B | 252 / 384 B |
-
-Flash has 150 B of headroom within the Phase 2 budget. Static SRAM includes the
-32-byte receive ring and its metadata, controller and completion mailbox. Stack
-usage is additional: it includes the 24-byte line buffer, planner, formatter
-buffers, call frames and interrupt saves; it is not part of `.data + .bss`.
-
-These checks also pass, with no warnings:
-
-```sh
-# Inside firmware/, using its pinned nightly:
-cargo clippy -- -D warnings
-cargo clippy --no-default-features --features uno -- -D warnings
-cargo fmt --check
-
-# Inside turntable-core/, using stable:
+# Inside turntable-core/, stable host Rust:
+cargo test
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
+
+# Inside firmware/, pinned nightly:
+cargo build --release
+avr-size -A target/avr-none/release/turntable-firmware.elf
+cargo clippy -- -D warnings
+cargo fmt --check
+cargo build --release --no-default-features --features uno
+avr-size -A target/avr-none/release/turntable-firmware.elf
+cargo clippy --no-default-features --features uno -- -D warnings
 ```
 
-The nightly, `arduino-hal` git revision and AVR target configuration are unchanged.
-This implementation does not edit the specification. Every existing external lockfile package/version/checksum is
-preserved, including `encoding_rs = 0.8.35`. The existing `avr-device = 0.8.1`
-package is now also declared directly so firmware can name its interrupt API;
-the only added package is the local `turntable-core` crate. Linking uses the
-installed avr-gcc 9.5.0 and the `atmega328p` CPU for both boards.
+Both firmware feature sets are clippy-clean with warnings denied. Each ELF was
+saved immediately after its build, before the next feature set replaced the
+shared output path.
+
+| Release build | .text | .data | .bss | Flash (.text + .data) | Static SRAM (.data + .bss) |
+|---|---:|---:|---:|---:|---:|
+| Nano (default) | 7930 B | 192 B | 67 B | 8122 / 8192 B | 259 / 384 B |
+| UNO | 7930 B | 192 B | 67 B | 8122 / 8192 B | 259 / 384 B |
+
+Flash headroom is **70 B** and static-SRAM headroom is **125 B** within the
+Phase 2 budgets. Compared with the previous implementation's 8042 B flash and
+252 B static SRAM, the complete fix pass adds **80 B flash and 7 B SRAM**.
+The permitted 512 B flash overrun is **unused: 0 B over 8 KiB**. Stack remains
+additional to static SRAM: assembler, planner, parser/formatter temporaries,
+call frames and interrupt saves require hardware high-water measurement.
+
+No dependency, manifest, lockfile or toolchain/configuration file changed:
+`nightly-2025-04-27`, `arduino-hal` rev
+`e5c8f37fe48419956e722490a82b9ca9b9fc61a2`, and
+`encoding_rs = 0.8.35` are preserved. No root Cargo manifest/workspace or new
+dependency was introduced. Both boards still target the ATmega328P subset.
+
+## Interrupt-latency budget
+
+Each explicit `interrupt::free` has a comment listing its worst-case contents
+and release bound. The bounds below come from the built ELF's
+`avr-objdump -d -C` control-flow paths, using the AVRe instruction timings in
+Microchip's [AVR Instruction Set Manual](https://onlinedocs.microchip.com/oxy/GUID-0B644D8F-67E7-49E6-82C9-1B2B9ABE6A0D-en-US-23/GUID-BA59618D-4850-490B-B176-0BCC3D9438A1.html).
+They conservatively select the longer branch paths and count from CLI through
+the matching SREG restoration, excluding panic/halt paths that require violated
+queue/borrow invariants. The relevant machine code is identical on both board
+builds; their startup UART configuration differs outside these sections.
+
+At 16 MHz, one cycle is 0.0625 us. The target is 20 us (320 cycles), comfortably
+below the nominal 57600 8N1 byte interval `10 / 57600 = 173.611 us`.
+
+| Critical section | Worst-case contents | CLI → SREG restore (ELF byte addresses) | Cycle bound | Time bound |
+|---|---|---|---:|---:|
+| Dispatch snapshot | Copy state, i32 position and period (6 bytes), borrow check | `0x36e` → `0x396` | 21 | 1.3125 us |
+| Dispatch acceptance | Detach DONE; compare u32 RX generation; bounded i32 controller checks/updates; copy planner k/origin/stops; copy motion snapshot | `0x3d6` → `0x8ec` | 293 | 18.3125 us |
+| Main dequeue | Detach DONE; pop one byte+generation or one loss notice; update queue metadata | `0xf4a` / `0x10e4` → `0x101c` | 94 / 88 | 5.875 / 5.5 us |
+| USART RX | Flush indices/increment generation if needed; discard or enqueue one byte | `0xb50` → `0xbf0` | 74 | 4.625 us |
+| TC2 tick | Small countdowns, one i32 step, table lookup, DONE mailbox, activity flag | `0xc48` → `0xdd4` | 135 | 8.4375 us |
+
+No normal critical-section path contains a loop, formatting call, UART write,
+wide multiply or division. Full ISR bodies, including compiler register saves,
+GPIO writes and RETI, have conservative bounds of **146 cycles / 9.125 us** for
+USART RX and **257 cycles / 16.0625 us** for TC2; hardware interrupt entry and the
+vector jump are additional. Compiler-generated stack-pointer masking sequences
+are 3 cycles / 0.1875 us; the peripheral-take startup section is 10 cycles /
+0.625 us and runs before global interrupts are enabled.
+
+These are static bounds for these release binaries, not measured timing under
+traffic. The maintainer still needs hardware acceptance 5 (idle and STATUS-loaded
+ROT 3600 timing) to check the physical clock, timer and serial interaction.
 
 ## Acceptance coverage
 
-- Parser: all eight commands round-trip; signs, mixed case, CR, boundary values,
-  missing/extra/unknown/non-numeric/oversized inputs and 25-byte lines.
-- Degrees: both ratios, every specified angle and sign, out-of-range values,
-  exhaustive sign symmetry across the allowed tenths, and exact rounding ties.
-- Planner: all ten specified stop counts for ten revolutions with both ratios,
-  per-delta error, cumulative targets, origin/counter resets, busy and range
-  rejection without mutation, counter/product overflow, and manual-motion
-  interleaving.
-- Controller: production sequencer, both directions, periods 1/2/50, exact step
-  count/position, one-coil transitions, 20/50/100 ms lifecycle timing, released
-  outputs, retained phase, settle rejection, next-move SPEED, zero moves and
-  exactly one position-bearing completion per accepted move.
-- Transport: production 32-byte ring, FIFO wrap, sticky hardware/overflow error,
-  corrupted and overlong lines, overflow on the delimiter itself, stale queued
-  delimiters, damaged newline, corruption after complete-line dequeue, recovery
-  to the following clean command, and simulated interleaved DONE output.
-- Size helpers: decimal conversion against host formatting over boundaries and
-  10,000 sampled u32 values; integer long division against an independent i128
-  oracle over i64 endpoints and 20,000 sampled numerator/divisor pairs.
+The previous parser, degree conversion, ten-revolution planner, sequencer,
+controller lifecycle, decimal and integer-division checks remain. The new/updated
+checks use the production RxBuffer, LineAssembler, Command::parse, generation
+guard, Planner and Controller, with the simulated ISR paused at explicit points:
 
-## Interpretations and differences from the frozen text
-
-1. The initial stop count is unspecified. It starts at **36**, matching the
-   closure exercise; `STOPS` sets any count in 1..720 and rebases the origin.
-2. The transport paragraph places `ERR LINE` after the next newline, while the
-   acceptance suite requires an error for a 40-byte burst **without** newline.
-   The implementation follows that explicit acceptance case: report once as
-   soon as damage/overflow is observed, then discard through a trustworthy LF.
-   The sticky transport flag is cleared only when main consumes that recovery
-   delimiter; the delimiter does not generate a duplicate error.
-3. A receive fault conservatively purges queued, undispatched bytes, discards
-   through a trustworthy newline, and inserts an ordered recovery marker before
-   following clean bytes. This may also drop buffered clean commands, which have
-   not been accepted. It prevents clearing a sticky fault at an older queued
-   newline and executing a truncated command with a different meaning. A newline
-   carrying a hardware error is not trusted as a recovery boundary.
-4. The rounding example `0.05°` cannot be passed through an integer-tenths API,
-   and neither production ratio makes that angle an exact half-step tie. Its
-   rational value is tested directly; exact positive/negative ties use the same
-   rounding helper and a synthetic 1800-step/revolution ratio. Input precision
-   remains exactly one decimal place.
-
-Energising begins at the first timer boundary after acceptance (less than one
-tick later), then lasts a full 20 ms. From that boundary, the last step is at
-`20 + |steps| × period` ms, release is 50 ms later, and DONE is another 100 ms
-later. Release is a transition within the settle interval, not an extra tick.
-Integer long division and the small decimal adapter preserve the specified
-numeric results and ufmt protocol while meeting the flash budget.
-
-## Review record
-
-Two fresh-context implementation reviews covered all files listed below, the
-requested v2 text, build configuration and verification logs. Both returned no
-material findings against v2. Their arithmetic checks confirmed 1 kHz, the GPIO
-sequence `4, 12, 8, 24, 16, 48, 32, 36`, the ten-turn totals and the size sums.
-
-The configured second-vendor review could not run because its CLI reported
-`Not logged in`. The updated project's named review helper was attempted, but
-the filesystem sandbox denied its required cache-directory write. The available
-fresh-context fallback reviews do not constitute that missing vendor review or
-successful execution of the blocked helper.
-
-An initial snapshot accidentally included the concurrently committed v3 text.
-Both reviewers received a corrected snapshot containing v2 from `bfaea88`
-before their final conclusions. A provisional missing lost-minus/multiple-queued-
-lines acceptance-matrix finding was withdrawn: those explicit cases were added
-in v3, while v2 section 5 requires corruption rejection, the 40-byte burst and
-interleaved DONE. The implementation additionally tests the production ring's
-lost-digit, stale-delimiter and overflow-delimiter paths.
-
-The pre-implementation plan review's event-retention, timer-boundary,
-transactional-counter and ordered-recovery concerns were addressed in code and
-host tests. The rounding-example ambiguity is resolved explicitly above.
-Reviewers did not independently run commands or test hardware. The actual AVR
-dispatcher/PAC operations are verified by builds and source review; host tests
-exercise the production pure logic. Interrupt latency, stack high-water use and
-physical motion still require hardware measurement. A parent-side disassembly
-inspection found no wide-arithmetic or printing-helper calls in either ISR.
-
-## Files
-
-| File | Change |
+| Case | Required outcome checked |
 |---|---|
-| `turntable-core/Cargo.toml` | Independent, dependency-free no_std library manifest. |
-| `turntable-core/Cargo.lock` | Lockfile containing only this local crate. |
-| `turntable-core/src/lib.rs` | Modules, public types and protocol errors; std only under cfg(test). |
-| `turntable-core/src/line.rs` | Fixed 24-byte assembler, corruption rejection and newline recovery. |
-| `turntable-core/src/command.rs` | Bounded ASCII command parser and signed integer/tenths conversion. |
-| `turntable-core/src/planner.rs` | Hundredths ratio, i64 intermediates, cumulative targets and prepare/commit. |
-| `turntable-core/src/controller.rs` | Tick-driven lifecycle, position limits, phase retention and Done outputs. |
-| `turntable-core/src/sequencer.rs` | Frozen eight-phase half-step table and direction handling. |
-| `turntable-core/src/rx.rs` | Production 32-byte ring and ordered sticky-error recovery. |
-| `turntable-core/src/decimal.rs` | Division-free decimal conversion, used by the ufmt adapter. |
-| `turntable-core/src/tests.rs` | Complete host acceptance cases and arithmetic/transport regressions. |
-| `firmware/Cargo.toml` | Core path dependency and direct declaration of existing avr-device 0.8.1. |
-| `firmware/Cargo.lock` | Local core package and direct dependency links; external pins unchanged. |
-| `firmware/src/main.rs` | USART0/TC2 interrupts, protected shared state, GPIO mapping, dispatcher and main loop. |
-| `firmware/src/console_format.rs` | Small ufmt numeric adapter and shared blocking transmitter. |
-| `docs/phase-2-verification.md` | This report and explicit spec interpretations. |
+| Completing LF dequeued, RX loss injected while printing previous DONE | Stale NEXT never moves or advances k; old DONE stays intact; one ERR LINE; next clean STEP executes |
+| Loss after parse/preparation, before acceptance, for all eight commands | No controller/planner mutation or stale acceptance/reply; one ERR LINE; next clean STEP executes |
+| Lost `-` of STEP -5, lost digit of STEP 10, lost LF after STEP 1, with three complete commands queued ahead | All queued/pre-loss/altered commands rejected; lost LF detected by DOR on the next line's first byte; one ERR LINE; recovery executes |
+| POS consumed and STEP prefix already assembled before lost `-` | Earlier accepted POS retained; STEP 5 cannot execute; one ERR LINE; recovery executes |
+| STEP 1 prefix consumed; LF lost; next line's first byte carries DOR | STEP 1 cannot execute; damaged following line dropped through LF; recovery executes |
+| Two faults, no accepted clean line between; notices drained or still pending | Two ERR LINE notices; no stale motion; recovery executes |
+| Second fault before recovery LF; first notice drained or still pending | Two ERR LINE notices even while assembler is discarding; recovery executes |
+| u32 loss-generation wrap with two pending notices | Stale generation rejected; both notices retained across wrap; recovery LF adds no duplicate |
+| Manual STEP 5 between NEXTs, both ratios and nine multi-stop counts, nonzero origin | Following NEXT returns to absolute target; revolution closes at origin + round(ratio); immediate zero-distance completion handled |
+
+Existing transport checks also cover 32-byte FIFO wrap, overflow without LF,
+overflow on LF itself, stale queued delimiters, hardware-damaged LF, overlong
+lines and interleaved clean DONE output. The former test asserting that a fully
+dequeued line survives a later RX loss has been replaced with the opposite v3.1
+regressions above.
+
+## Remaining interpretations and limits
+
+- ERR LINE is still emitted as soon as loss/length damage is observed, before
+  recovery LF if necessary. This differs from reading the transport paragraph
+  as requiring a deferred reply, but satisfies acceptance 5's explicit 40-byte
+  burst **without newline** case. Recovery LF itself emits no duplicate error.
+- Absolute NEXT deliberately supersedes v3.1's relative-delta wording, following
+  the accepted v3.2 requirement. Hardware acceptance 4 likewise uses **200
+  lockstep commands**, each sent after the preceding reply. A free-running host
+  can overflow the 32-byte ring while replies block main and is expected to
+  produce ERR LINE bursts by design; it is not the lockstep acceptance test.
+- The existing signed-i32 move interface retains an extreme v3.2 boundary:
+  a NEXT correction from exactly `-2^30` to `+2^30` needs `+2^31` half-steps and
+  returns ERR RANGE before changing k, although both endpoints are in bounds.
+  This was confirmed separately with origin `2^30 - 113`, STOPS 36 and the
+  provisional ratio. Expanding the controller's signed move representation is
+  outside the listed fix scope; ordinary grid corrections and all specified
+  acceptance cases pass.
+- The initial stop count remains 36 because the spec leaves it unspecified.
+  The illustrative 0.05-degree rounding example is below the public API's
+  integer-tenths precision; its rational value and actual positive/negative
+  ties are tested with the production rounding helper.
+- Generation equality/notice counting assumes fewer than `2^32` unreported
+  flushes or flushes during one byte-to-acceptance interval. Normal wrap is
+  tested; a full undrained counter lap is a finite-counter limit. At the UART's
+  byte rate, that requires more than eight days of continuous faults.
+- No hardware acceptance was run. Gearbox calibration, released-position
+  accuracy, loaded motion, physical closure, lockstep serial traffic, measured
+  timing under traffic and stack high-water use remain for the maintainer.

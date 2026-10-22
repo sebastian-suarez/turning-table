@@ -13,7 +13,8 @@ use avr_device::interrupt::{self, Mutex};
 use core::cell::{Cell, RefCell};
 use panic_halt as _;
 use turntable_core::{
-    Command, Controller, Error, LineAssembler, Planner, RxBuffer, State, RATIO_X100,
+    Command, Controller, Error, LineAssembler, Planner, PreparedCommand, RxBuffer, State,
+    RATIO_X100,
 };
 
 mod console_format;
@@ -57,6 +58,9 @@ fn USART_RX() {
     let byte = usart.udr0().read().bits();
     let damaged =
         status.dor0().bit_is_set() || status.fe0().bit_is_set() || status.upe0().bit_is_set();
+    // Worst case: flush queue indices, increment the u32 loss generation, and
+    // enqueue one byte. No loop, buffer copy, formatting or UART write.
+    // Release bound: 74 cycles = 4.625 us at 16 MHz (see verification report).
     interrupt::free(|cs| RX.borrow(cs).borrow_mut().receive(byte, damaged));
     // Never print in an ISR. The 32-byte queue gives main time for ufmt's
     // blocking TX; overflow is sticky and rejects input instead of changing it.
@@ -64,17 +68,28 @@ fn USART_RX() {
 
 #[avr_device::interrupt(atmega328p)]
 fn TIMER2_COMPA() {
-    let output = interrupt::free(|cs| {
-        let output = MOTION.borrow(cs).borrow_mut().tick();
+    // Worst case: one tick's small counters, i32 step and table lookup, a
+    // position-bearing DONE mailbox write, and a one-bit activity snapshot.
+    // Release bound: 135 cycles = 8.4375 us; full ISR body is 16.0625 us.
+    let (output, active) = interrupt::free(|cs| {
+        let mut motion = MOTION.borrow(cs).borrow_mut();
+        let output = motion.tick();
         if let Some(position) = output.done {
             // There can be only one in-flight move. main detaches an old event
             // atomically before it accepts a new move, so this cannot overwrite
             // an unreported completion. Retain the *completed* position.
             DONE.borrow(cs).set(Some(position));
         }
-        output
+        (output, motion.snapshot().state != State::Idle)
     });
     write_coils(output.pattern);
+    // PB0/PB2 will be the arm coils. Keep PB5's read/modify/write in this ISR
+    // too: main must never restore an old PORTB value over a newer coil write.
+    // The retained D13 pin token only configures direction before interrupts.
+    // SAFETY: this ISR is the only PORTB writer after interrupts are enabled.
+    let port = unsafe { &*pac::PORTB::ptr() };
+    port.portb()
+        .modify(|r, w| unsafe { w.bits((r.bits() & !(1 << 5)) | (u8::from(active) << 5)) });
     // Controller::tick contains only counters, i32 +/-1 and table lookup.
     // Degree/stop i64 multiplication/division is exclusively in main.
 }
@@ -107,30 +122,53 @@ fn print_error<W: ufmt::uWrite>(serial: &mut W, error: Error) {
     let _ = ufmt::uwriteln!(serial, "ERR {}\r", error.as_str());
 }
 
-fn dispatch<W: ufmt::uWrite>(serial: &mut W, planner: &mut Planner, command: Command) {
+// Keep parser locals out of the planner/acceptance stack frame. On an 8-bit
+// AVR, inlining both paths spills many registers and costs flash as well as
+// instructions inside the critical section.
+#[inline(never)]
+fn dispatch<W: ufmt::uWrite>(
+    serial: &mut W,
+    planner: &mut Planner,
+    command: Result<Command, Error>,
+    generation: u32,
+) {
+    // Worst case: copy state, i32 position and the next-move period (6 bytes).
+    // Release bound: 21 cycles = 1.3125 us at 16 MHz.
     let snapshot = interrupt::free(|cs| MOTION.borrow(cs).borrow().snapshot());
     // This is intentionally OUTSIDE every critical section. AVR's software
     // i64 division takes many instructions; masking RX for that long can lose
     // bytes at 57600 baud (one incoming byte about every 174 microseconds).
-    let prepared = match planner.prepare(command, snapshot) {
-        Ok(prepared) => prepared,
-        Err(error) => {
-            print_error(serial, error);
-            return;
-        }
-    };
-    let (previous_done, result, snapshot) = interrupt::free(|cs| {
+    let prepared = command.and_then(|command| planner.prepare(command, snapshot));
+    // Worst case: detach DONE, compare one u32 generation, apply one prepared
+    // command (bounded i32 checks/updates), commit k/origin/stops and copy the
+    // 6-byte motion snapshot. No parsing, i64 arithmetic, formatting or TX.
+    // Release bound: 293 cycles = 18.3125 us, below the 20 us target.
+    let (previous_done, accepted) = interrupt::free(|cs| {
         // Check/apply and event detachment are one transaction. The ISR may
         // have completed between the earlier snapshot and this lock. Idle is
         // still available; a pending event must not produce an extra BUSY.
         let previous_done = DONE.borrow(cs).take();
-        let mut motion = MOTION.borrow(cs).borrow_mut();
-        let result = motion.apply(prepared);
-        (previous_done, result, motion.snapshot())
+        let accepted = RX.borrow(cs).borrow().accept_if_current(generation, || {
+            let mut motion = MOTION.borrow(cs).borrow_mut();
+            let result = prepared.and_then(|prepared| {
+                let output = motion.apply(prepared)?;
+                // Commit before restoring interrupts: a loss cannot split the
+                // controller acceptance from its matching planner update.
+                planner.commit(prepared);
+                Ok(output)
+            });
+            (result, motion.snapshot())
+        });
+        (previous_done, accepted)
     });
     if let Some(position) = previous_done {
         print_done(serial, position);
     }
+    // The queued loss notice will print exactly one ERR LINE for this flush.
+    // Printing another error here would count the same loss twice.
+    let Some((result, snapshot)) = accepted else {
+        return;
+    };
     let output = match result {
         Ok(output) => output,
         Err(error) => {
@@ -138,11 +176,12 @@ fn dispatch<W: ufmt::uWrite>(serial: &mut W, planner: &mut Planner, command: Com
             return;
         }
     };
-    // Planner is main-only. Advancing k or rebasing origin cannot race an ISR,
-    // and a rejected command above never commits either change.
-    planner.commit(prepared);
-    match command {
-        Command::Pos => {
+    // Everything below uses local snapshots/main-only planner words. Blocking
+    // POS/STATUS/DONE formatting and UART TX always leave interrupts enabled.
+    // Use the prepared tag for replies too, so the original parser result need
+    // not survive the planner's arithmetic in AVR's limited register set.
+    match prepared {
+        Ok(PreparedCommand::Pos) => {
             let _ = ufmt::uwriteln!(
                 serial,
                 "POS {} {}\r",
@@ -150,7 +189,7 @@ fn dispatch<W: ufmt::uWrite>(serial: &mut W, planner: &mut Planner, command: Com
                 Number::unsigned(planner.k())
             );
         }
-        Command::Status => {
+        Ok(PreparedCommand::Status) => {
             let _ = ufmt::uwriteln!(
                 serial,
                 "STATUS {} {} {} {} {}\r",
@@ -165,7 +204,7 @@ fn dispatch<W: ufmt::uWrite>(serial: &mut W, planner: &mut Planner, command: Com
             let _ = ufmt::uwriteln!(serial, "OK\r");
         }
     }
-    // Zero-length STEP/ROT produces its event immediately, after its own OK.
+    // Zero-distance STEP/ROT/NEXT produces its event immediately, after its OK.
     // This value stays local so consecutive zero moves cannot overwrite it.
     if let Some(position) = output.done {
         print_done(serial, position);
@@ -183,7 +222,7 @@ fn main() -> ! {
     serial.listen(arduino_hal::hal::usart::Event::RxComplete);
     let (_receiver, serial) = serial.split();
     let mut serial = ConsoleWriter(serial);
-    let mut led = pins.d13.into_output();
+    let _led = pins.d13.into_output();
     let _motor_pins = (
         pins.d2.into_output(),
         pins.d3.into_output(),
@@ -203,28 +242,27 @@ fn main() -> ! {
     ufmt::uwriteln!(&mut serial, "turntable-firmware boot\r").unwrap_infallible();
 
     loop {
-        let (done, item, state) = interrupt::free(|cs| {
-            (
-                DONE.borrow(cs).take(),
-                RX.borrow(cs).borrow_mut().pop(),
-                MOTION.borrow(cs).borrow().snapshot().state,
-            )
-        });
+        // Worst case: detach the 5-byte DONE mailbox and pop one byte+u32
+        // generation or one loss notice. No assembler, parser or UART TX.
+        // Release bound: 94 cycles = 5.875 us at 16 MHz.
+        let (done, item) =
+            interrupt::free(|cs| (DONE.borrow(cs).take(), RX.borrow(cs).borrow_mut().pop()));
         if let Some(position) = done {
             print_done(&mut serial, position);
         }
-        // D13 is an activity indication, including hold and settle. It has a
-        // separate PORTB register, so it cannot disturb the ISR's PORTD coils.
-        if state == State::Idle {
-            led.set_low();
-        } else {
-            led.set_high();
-        }
         if let Some(item) = item {
             if let Some(line) = assembler.push(item.byte, item.corrupted) {
-                match line.and_then(Command::parse) {
-                    Ok(command) => dispatch(&mut serial, &mut planner, command),
-                    Err(error) => print_error(&mut serial, error),
+                if item.corrupted {
+                    // Notices survive later losses too. Never generation-gate
+                    // them or coalesce two faults during the same recovery.
+                    print_error(&mut serial, Error::Line);
+                } else {
+                    dispatch(
+                        &mut serial,
+                        &mut planner,
+                        line.and_then(Command::parse),
+                        item.generation,
+                    );
                 }
             }
         }

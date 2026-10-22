@@ -20,3 +20,26 @@ than M3 (M4 and M8 joints use nuts), 12.9 hardware, 2RS bearings.
 Power rules (also in `docs/bring-up.md`): motors, drivers and servo from the 5 V adapter; the adapter's GND to a
 Nano GND pin; never the Nano's `5V` pin. Do not connect the adapter's 5 V to `VIN` (wants 7-12 V) and do not feed
 the `5V` pin while USB is connected.
+
+## Amazon links (amazon.com, found 2026-10-22)
+
+Listings found by web search; prices, stock and "ships to Colombia" eligibility were not verified, so check each
+page (Amazon Global filter) before ordering. Hardware items (bolts, nuts, washers) come in bulk packs on Amazon; a
+local ferretería is cheaper for two bolts. Mercado Libre carries the steppers and bearings locally.
+
+| # | Item | Listing | Alternate | Search |
+|---|---|---|---|---|
+| 1 | 28BYJ-48 + ULN2003, 5 sets | [CenryKay 5 sets](https://www.amazon.com/dp/B086D5SXPV) | [Wrenmor 5-pack](https://www.amazon.com/dp/B0H7X5F9NJ) | [search](https://www.amazon.com/s?k=28BYJ-48+ULN2003+5+pack) |
+| 2 | 5 V 3 A adapter, 5.5 × 2.1 mm | [Security-01 2-pack, UL listed](https://www.amazon.com/dp/B09JW38H3X) | [OMNIHIL 5 V 3 A](https://www.amazon.com/dp/B006QYSRDQ) | [search](https://www.amazon.com/s?k=5V+3A+power+supply+5.5x2.1mm) |
+| 2b | Barrel jack to screw terminals | [Cctv4Less female jack adapters](https://www.amazon.com/dp/B077QD4G3Q) | [DC-022 panel-mount sockets](https://www.amazon.com/dp/B0BC7JXZG2) | [search](https://www.amazon.com/s?k=5.5x2.1mm+female+dc+jack+screw+terminal) |
+| 3 | 608ZZ bearings, 10-pack | [608ZZ 10 pcs](https://www.amazon.com/dp/B07H83VV6B) | [608ZZ 10 pcs](https://www.amazon.com/dp/B07DZDLB3N) | [search](https://www.amazon.com/s?k=608ZZ+bearing+10+pack) |
+| 4 | M8 × 100 DIN 931, 8.8, zinc | [Jet Fitting, partially threaded, 100-pack](https://www.amazon.com/dp/B01MTAMVS9) | [Newport Fasteners 200-pack](https://www.amazon.com/dp/B07CQC2D72) (bulk; buy locally if you can) | [search](https://www.amazon.com/s?k=M8-1.25+x+100mm+hex+bolt+partially+threaded+8.8) |
+| 5 | M8 nyloc nuts, DIN 985 | [MonsterBolts 10-pack](https://www.amazon.com/dp/B07MWC4V1R) | [Prime-Line 25-pack](https://www.amazon.com/dp/B07DSBTD8M) | [search](https://www.amazon.com/s?k=M8-1.25+nylon+insert+lock+nut+DIN+985) |
+| 6 | M8 fender washers, 24 mm OD | [ASMC DIN 9021B, 50-pack](https://www.amazon.com/dp/B07CW3DCPL) | [100-pack](https://www.amazon.com/dp/B01LYUP7SM) | [search](https://www.amazon.com/s?k=M8+fender+washer+24mm+DIN+9021) |
+| 7 | M3 heat-set inserts, 5.7 × 4.6 mm | [cSeao 120 pcs](https://www.amazon.com/dp/B07XXR2TFJ) | [MroMax 140 pcs](https://www.amazon.com/dp/B0DDWS7BTS) | [search](https://www.amazon.com/s?k=M3+heat+set+inserts+5.7+4.6+brass) |
+| 8 | M3 (and M4) socket screws with nuts | [Glarks 510-piece M3/M4/M5 kit](https://www.amazon.com/dp/B08HHZHXTP) covers items 8 and 9 | [HH 120-piece M3 set](https://www.amazon.com/dp/B01BWN0VES) | [search](https://www.amazon.com/s?k=M3+socket+head+cap+screw+assortment+stainless) |
+| 9 | M4 × 8 button head + nuts | [M4 × 8 button head, 100 pcs](https://www.amazon.com/dp/B07QDWH5C2) (nuts from item 8) | [170-piece M4 kit with nuts](https://www.amazon.com/dp/B0DSFW8LLY) | [search](https://www.amazon.com/s?k=M4+x+8mm+button+head+screws+nuts) |
+| 11 | 22 AWG solid hook-up wire | [TUOFENG 6 colours, 30 ft each](https://www.amazon.com/dp/B07TX6BX47) | [TMH 6 colours, 25 ft each](https://www.amazon.com/dp/B0G43VFRM4) | [search](https://www.amazon.com/s?k=22+AWG+solid+core+hook+up+wire+kit) |
+| 11b | Dupont jumper wires | [REXQualis 240 pcs, M-F/M-M/F-F](https://www.amazon.com/dp/B0F8VDMHRT) | [ELEGOO 40 × M-F 20 cm](https://www.amazon.com/dp/B0H6F7ZZFX) | [search](https://www.amazon.com/s?k=dupont+jumper+wires+kit+20cm) |
+
+Item 10 (counterweight) is M8 nuts or coins; no purchase needed.

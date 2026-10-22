@@ -1,4 +1,4 @@
-# Phase 2 spec: stepper drive (v3.1, after two plan attacks and the first implementation review, 2026-10-22)
+# Phase 2 spec: stepper drive (v3.2, after two plan attacks and the first implementation reviews, 2026-10-22)
 
 Acceptance suite first; an implementation must pass it on the host before it is flashed. v1 → v2 (Sol attack):
 cumulative closure targets, buffered RX with corruption rejection, one-move-in-flight policy, numeric bounds, a
@@ -31,6 +31,9 @@ Motor and ULN2003 `+` from an external 5 V supply, GND common with the Nano.
   drains the ring buffer, feeds the parser, executes commands, prints replies and events. The ISRs never print.
   Shared state crosses the ISR boundary only through `avr_device::interrupt::Mutex<Cell<_>>` or `RefCell`, and
   no wide arithmetic (i64 division) happens inside an ISR or a critical section.
+- Ports shared with ISR-driven outputs are never written by the main loop with a read-modify-write: PORTD carries
+  the platter coils and PORTB will carry the arm coils (PB0, PB2), so the D13 LED (PB5) is driven from the TC2 ISR
+  next to the coil write, or inside `interrupt::free`.
 - Interrupt-latency budget: a critical section only copies or updates a few words (target ≤ 20 µs, hard limit
   well under one UART byte time of 174 µs at 57600). Formatting and UART writes always run with interrupts
   enabled, from a snapshot taken in a short critical section; `STATUS`/`POS` never print while holding shared
@@ -59,10 +62,13 @@ Motor and ULN2003 `+` from an external 5 V supply, GND common with the Nano.
 - `degrees_to_halfsteps(tenths: i32) -> Option<i32>`: `|tenths| ≤ 36000` (±10 turns), computed in `i64` as
   `round_half_away(tenths × ratio_x100 / 3600 / 100)`; `None` when out of range.
 - Cumulative stop targets: with `N` stops (1..720) and global stop counter `k` since the planner origin,
-  `target(k) = round(k × ratio_x100 / (N × 100))` in `i64`, and `NEXT` moves `target(k+1) − target(k)`. Hence
-  after 10 revolutions the position is `round(10 × 4075.77) = 40758`, the first revolution totals 4076 and some
-  later ones 4075. `ZERO` sets position = 0 and origin = 0, `k = 0`; `STOPS n` sets `k = 0` with origin = current
-  position. Position is checked arithmetic: a move that would leave `|position| > 2^30` is rejected `ERR RANGE`.
+  `target(k) = round(k × ratio_x100 / (N × 100))` in `i64`, and `NEXT` moves to the **absolute** position
+  `origin + target(k+1)` (a move of `origin + target(k+1) − position`), so a manual `STEP` or `ROT` between stops
+  does not shift the grid: the next `NEXT` lands on the grid again (v3.2; v3.1 had the relative delta). Hence
+  after 10 revolutions the position is `origin + round(10 × 4075.77) = origin + 40758`, the first revolution totals
+  4076 and some later ones 4075. `ZERO` sets position = 0, origin = 0, `k = 0`; `STOPS n` sets `k = 0` with
+  origin = current position. Position is checked arithmetic: a move that would leave `|position| > 2^30` is
+  rejected `ERR RANGE`.
 
 ## Console protocol
 
@@ -97,7 +103,8 @@ Motor and ULN2003 `+` from an external 5 V supply, GND common with the Nano.
 3. Planner: for N in {1, 2, 3, 5, 8, 24, 36, 72, 360, 720} and both ratios, 10 × N consecutive `NEXT` deltas sum
    to `round(10 × ratio)`, every delta is within one half-step of the ideal, the first revolution sums to
    `round(ratio)`; `ZERO` and `STOPS` reset `k` as specified; a double `NEXT` while busy is rejected and does not
-   advance `k`.
+   advance `k`; a manual `STEP 5` between two `NEXT`s is absorbed by the following `NEXT` (absolute targeting), so
+   the revolution still closes on `origin + round(ratio)`.
 4. Controller: using the production sequencer and a simulated 1 kHz tick, for periods 1, 2 and 50 and both
    directions: the emitted patterns follow the table in order with exactly one coil changing per step, the number
    of emitted steps equals the request, the final position is correct, energise/hold/release/settle durations
@@ -125,8 +132,11 @@ Motor and ULN2003 `+` from an external 5 V supply, GND common with the Nano.
    measured **after** `DONE` (released); the pointer must not move during a 10 s dwell nor across 10 release/restart
    cycles.
 3. Closure: `STOPS 36`, 360 × `NEXT` (10 turns) returns within ±0.5°; the index mark passes exactly 10 times.
-4. Serial robustness: from the Mac, send 200 commands back to back through the port while moves complete; no
-   command executes with a different meaning, every accepted move gets one `DONE`, corrupted lines get `ERR LINE`.
+4. Serial robustness: from the Mac, send 200 commands in **lockstep** (each one after the previous reply) while
+   moves complete; no command executes with a different meaning, every accepted move gets one `DONE`, corrupted
+   lines get `ERR LINE`. A free-running stream is expected to overflow the 32-byte ring while the firmware prints a
+   reply (a 42-byte `STATUS` reply blocks for 7 ms = 42 inbound bytes) and to produce `ERR LINE` bursts by design;
+   the Phase 3 host therefore runs lockstep.
 5. Timing under traffic: `ROT 3600` at `SPEED 2` must take 40758 × 2 ms = 81.5 s ± 0.5 s from `OK` to `DONE`,
    measured with a stopwatch, once idle and once while `STATUS` is sent every 200 ms from the Mac. A longer time
    means ticks were lost to masked interrupts.

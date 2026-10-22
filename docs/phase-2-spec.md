@@ -1,4 +1,4 @@
-# Phase 2 spec: stepper drive (v3, after two plan attacks on 2026-10-22)
+# Phase 2 spec: stepper drive (v3.1, after two plan attacks and the first implementation review, 2026-10-22)
 
 Acceptance suite first; an implementation must pass it on the host before it is flashed. v1 → v2 (Sol attack):
 cumulative closure targets, buffered RX with corruption rejection, one-move-in-flight policy, numeric bounds, a
@@ -78,7 +78,11 @@ Motor and ULN2003 `+` from an external 5 V supply, GND common with the Nano.
   flag. The `LineAssembler`, on seeing `lost`, clears its partial line and discards bytes until the first `\n`
   that was received *after* the loss (every byte it sees after the flush is post-loss by construction), replies
   `ERR LINE` once and resumes. A line longer than 24 bytes is dropped the same way (discard through its `\n`,
-  `ERR LINE`). Rationale: at 57600 a byte arrives every 174 µs and the blocking `ufmt` writer can hold the main
+  `ERR LINE`). Acceptance is atomic with the loss state: a command is executed only if no loss occurred between
+  the reception of its terminating `\n` and its acceptance by the controller (checked in the same critical
+  section that applies it, e.g. with a loss generation counter); a line already dequeued or parsed when a loss
+  happens is discarded like queued data, so that after `ERR LINE` a host can resend everything it has not seen
+  acknowledged without any command running twice (v3.1 clarification, 2026-10-22). Rationale: at 57600 a byte arrives every 174 µs and the blocking `ufmt` writer can hold the main
   loop longer than the 2-byte hardware FIFO survives; a corrupted line must never be executed as a different valid
   command, and clearing the error at the *next queued* newline would let `STEP -5` with a lost `-` run as
   `STEP 5` when clean lines were queued ahead of it.

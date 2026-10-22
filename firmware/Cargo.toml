@@ -18,6 +18,10 @@ uno = ["arduino-hal/arduino-uno"]
 [dependencies]
 panic-halt = "1.0.0"
 ufmt = "0.2.0"
+turntable-core = { path = "../turntable-core" }
+# Already in the pinned HAL's dependency graph and Cargo.lock; making it
+# direct exposes interrupt Mutex/attributes without adding another package.
+avr-device = "=0.8.1"
 
 # arduino-hal is not on crates.io; pin the same revision as the official avr-hal-template.
 [dependencies.arduino-hal]

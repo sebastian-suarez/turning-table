@@ -1,0 +1,9 @@
+[package]
+name = "turntable-core"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Deliberately not a workspace: a host test must never inherit firmware's AVR
+# target, build-std configuration or pinned nightly. This crate needs only core.
+[dependencies]

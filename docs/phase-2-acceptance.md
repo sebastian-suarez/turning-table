@@ -8,9 +8,9 @@ commands and what to expect. Record the readings at the end in `docs/phase-2-ver
 - Stepper wired with the USB cable unplugged (`docs/bring-up.md`, section 9): ULN2003 IN1..IN4 to D2..D5, driver
   `+` to the red wire soldered to a `5V` pad of the 18650 power-bank shield, driver `-` to the black wire from the
   `-` pad of the same pair and to a Nano GND (common ground).
-- Shield ready: cell charged (LEDs), slide switch on HOLD (the position in which the `5V` pads still read 5 V after
-  two minutes with nothing connected), output switched on with the button. In AUTO the shield switches off a few
-  seconds after each move and the next command moves nothing.
+- Shield ready: cell charged (LEDs), slide switch on HOLD (knob toward the `ims` mark; verified 2026-10-23: 5.17 V
+  on the `5V` pads after two minutes with nothing connected), output switched on with the button. In AUTO the
+  shield switches off a few seconds after each move and the next command moves nothing.
 - Protractor sheet (`hardware/measure/protractor-190mm-a4.svg`, printed at 100 %) taped flat with the motor shaft
   through its centre hole; the card pointer (`pointer-95mm.svg`) pressed onto the shaft. The motor should be held
   down (tape or a clamp) so it cannot creep.

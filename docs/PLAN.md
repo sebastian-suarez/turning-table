@@ -22,8 +22,9 @@ Legend: [x] done, [~] in progress, [ ] todo. Written 2026-10-22; decisions recor
 - **D4 Power: the 18650 power-bank shield already on hand** (decided 2026-10-22 from photos of the board: single
   cell, 5 V 3 A and 3 V 1 A outputs, USB-C and micro-USB charging, XB8608 cell protection, push button, HOLD/AUTO
   slide switch; three boards and three Bengala 2200 mAh cells). A red/black pair soldered to one 5V header pair
-  feeds the ULN2003 boards, ground common with the Nano; slide switch on HOLD so the output survives the idle time
-  between moves (the firmware releases the coils); charged between sessions, never while the table runs. Replaces
+  feeds the ULN2003 boards, ground common with the Nano; slide switch on HOLD (knob toward the `ims` mark; verified
+  2026-10-23: 5.17 V after two minutes with no load) so the output survives the idle time between moves (the
+  firmware releases the coils); charged between sessions, never while the table runs. Replaces
   the 5 V 3 A mains adapter and the barrel-jack adapters that were in the BOM.
 
 ## Phases

@@ -21,8 +21,8 @@ use nuts), 12.9 hardware, 2RS bearings.
 Power rules (also in `docs/bring-up.md`): motors, drivers and servo from the shield's 5 V output; the `-` pad of
 the same header pair to the ULN2003 `-` and to a Nano GND pin; never the Nano's `5V` pin. Do not connect the
 shield's 5 V to `VIN` (wants 7-12 V) and do not feed the `5V` pin while USB is connected. Slide switch on HOLD
-(the position in which the 5V pads still read 5 V after two minutes with nothing connected; the positions are not
-labelled on the board), output switched on with the button, cell charged through USB-C or micro-USB between
+(knob toward the `ims` mark next to the micro-USB port; verified 2026-10-23: 5.17 V on the 5V pads and LEDs on
+after two minutes with nothing connected), output switched on with the button, cell charged through USB-C or micro-USB between
 sessions, never while the table runs: the output drops out for about half a second when the charger is plugged in.
 
 ## Amazon links (amazon.com, found 2026-10-22)

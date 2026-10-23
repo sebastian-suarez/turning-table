@@ -197,11 +197,12 @@ cell protection that gives a regulated 5 V at up to 2.2 A continuous. Solder a r
 of its three `5V` header pairs (`+` and `-` are printed next to the pads): red to the ULN2003 `+`, black to the
 ULN2003 `-` and on to a Nano GND pin (common ground); only the signal wires and GND go between the supply side and
 the Nano. Before the first session: charge the cell through the USB-C or micro-USB port (the LEDs show the level),
-press the button to switch the output on, and put the small slide switch next to the micro-USB port in the position
-where the `5V` pads still read 5 V on a multimeter after two minutes with nothing connected. That position is HOLD;
-in the other one (AUTO) the shield switches itself off a few seconds after the firmware releases the coils, and the
-next move does nothing while the console still answers `OK` and `DONE`. Do not plug the charger in while the table
-runs: the output drops out for about half a second. Read the voltage printed on the 28BYJ-48 label: 5 V and 12 V
+press the button to switch the output on, and put the small slide switch next to the micro-USB port in HOLD: knob
+toward the end marked `ims`. Verified 2026-10-23 with a multimeter on DC volts: cell 4.08 V, `5V` pads 5.17 V and
+`3V` pads 3.35 V with the output on, still 5.17 V and LEDs on after two minutes with nothing connected. In the other
+position (AUTO) the shield switches itself off a few seconds after the firmware releases the coils, and the next
+move does nothing while the console still answers `OK` and `DONE`. Do not plug the charger in while the table runs:
+the output drops out for about half a second. Read the voltage printed on the 28BYJ-48 label: 5 V and 12 V
 variants exist and look identical; kits normally ship the 5 V one, and 12 V into a 5 V motor burns it. The Phase 2
 firmware adds the half-step sequencer and the `STEP`/`ROT` console commands; `docs/phase-2-acceptance.md` walks
 through the acceptance test.

@@ -11,9 +11,30 @@ commands and what to expect. Record the readings at the end in `docs/phase-2-ver
 - Shield ready: cell charged (LEDs), slide switch on HOLD (knob toward the `ims` mark; verified 2026-10-23: 5.17 V
   on the `5V` pads after two minutes with nothing connected), output switched on with the button. In AUTO the
   shield switches off a few seconds after each move and the next command moves nothing.
-- Protractor sheet (`hardware/measure/protractor-190mm-a4.svg`, printed at 100 %) taped flat with the motor shaft
-  through its centre hole; the card pointer (`pointer-95mm.svg`) pressed onto the shaft. The motor should be held
-  down (tape or a clamp) so it cannot creep.
+- Print and test `hardware/measure/fit-coupon.stl` first, as described in `hardware/measure/README.md`: the plate
+  must sit flat over the boss (up to about 0.3 mm of slide is within the 0.2° budget; no visible wobble once the
+  screws are tight), both ear holes must align, and the chosen double-D fit must go on with a firm thumb push
+  with no rotation under light finger pressure. The coupon takes 20 to 30 minutes and engages the full 6 mm
+  of shaft flats, so it reads slightly tighter than the hub's 4.1 mm
+  engagement. Set `flat_fit` and re-export `pointer.stl` before printing the pointer and `protractor-disc.stl`.
+  If no fit holds, `hub_clamp = true` adds an M3 clamp and grows the hub to Ø18. For recessed ticks, export the
+  pointer with the same `tick_style = "recessed"` as the disc; the pointer's hub height depends on that style.
+- With both supplies still disconnected, hold the motor down (tape or a clamp) so it cannot creep. Centre the
+  printed disc on the shaft boss and clamp it to the ears with **two M4 button-head screws from above, nuts
+  underneath**. Heads and any washers above the disc must total at most 3 mm; do not use 4 mm socket-cap heads.
+  Align the pointer's double-D flats with the shaft and press on the hub, arm uppermost. The Ø5.3 round relief
+  at the hub's plate-facing end is 1.8 mm deep by default (2.2 mm for recessed ticks), allowing it to pass the
+  shaft's round base and reach the paper gap while retaining 4.1 mm of double-D engagement. Find the highest
+  point of a full hand sweep, where the tip comes closest to the ticks. Set its height there with a sheet of
+  paper (about 0.1 mm) just sliding between a tick and the tip's flat lower face: leave 0.1–0.3 mm of gap and
+  never let it drag anywhere in the sweep. If the hub stops on its relief shoulder before reaching the paper
+  gap, lower `motor_flat_length` and re-export the pointer; do not force it down.
+- **Before motor power, turn the pointer a full 360° by hand:** it must clear every head and nut by at least
+  1 mm, never touch the disc, and remain tight on the shaft. The reading datum is the **0.8 × 0.8 mm end face
+  at r = 93 mm**, read against the **outer ends of the ticks from above**; nothing of the pointer hides the
+  end face and the arm is never the datum. 0° is at the top, increasing clockwise. Take readings after `DONE` (coils off),
+  approaching each target from the same direction. The SVG sheet and card pointer remain a paper alternative;
+  see `hardware/measure/README.md` for their 100% print scale and setup.
 - Power up in this order: shield on (button), then the USB cable. `ls /dev/cu.*` must show the board again.
 
 ## 1. Flash the Phase 2 firmware and talk to it

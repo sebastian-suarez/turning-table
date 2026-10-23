@@ -787,13 +787,13 @@ fn ring_overflow_without_newline_reports_once_but_keeps_sticky_discard() {
     let mut rx = RxBuffer::new();
     let mut assembler = LineAssembler::new();
     for _ in 0..40 {
-        rx.receive(b'X', false);
+        rx.receive(b'X', false, false);
     }
     assert_eq!(drain(&mut rx, &mut assembler), vec![Err(Error::Line)]);
     assert!(rx.has_error());
     assert!(drain(&mut rx, &mut assembler).is_empty());
     for &byte in b"tail\nPOS\n" {
-        rx.receive(byte, false);
+        rx.receive(byte, false, false);
     }
     assert_eq!(drain(&mut rx, &mut assembler), vec![Ok(Command::Pos)]);
     assert!(!rx.has_error());
@@ -803,14 +803,14 @@ fn ring_overflow_without_newline_reports_once_but_keeps_sticky_discard() {
 fn production_ring_preserves_all_32_bytes_and_wraps_in_fifo_order() {
     let mut rx = RxBuffer::new();
     for byte in 0..32 {
-        rx.receive(byte, false);
+        rx.receive(byte, false, false);
     }
     assert!(!rx.has_error());
     for byte in 0..16 {
         assert_eq!(rx.pop().unwrap().byte, byte);
     }
     for byte in 32..48 {
-        rx.receive(byte, false);
+        rx.receive(byte, false, false);
     }
     for byte in 16..48 {
         let item = rx.pop().unwrap();
@@ -831,18 +831,18 @@ fn production_ring_overflow_sticky_error_and_lost_newline_recover_once() {
         }
         let burst = if newline_is_overflow_byte { 32 } else { 40 };
         for _ in 0..burst {
-            rx.receive(b'1', false);
+            rx.receive(b'1', false, false);
         }
         if !newline_is_overflow_byte {
             assert!(rx.has_error());
         }
-        rx.receive(b'\n', false);
+        rx.receive(b'\n', false, false);
         assert!(
             rx.has_error(),
             "sticky until main consumes the recovery marker"
         );
         for &byte in b"POS\n" {
-            rx.receive(byte, false);
+            rx.receive(byte, false, false);
         }
         assert_eq!(
             drain(&mut rx, &mut assembler),
@@ -857,12 +857,12 @@ fn production_ring_error_cannot_clear_at_an_older_queued_newline() {
     let mut rx = RxBuffer::new();
     let mut assembler = LineAssembler::new();
     for &byte in b"POS\nSTEP 1" {
-        rx.receive(byte, false);
+        rx.receive(byte, false, false);
     }
-    rx.receive(b'0', true); // truncated STEP 10 must never become valid STEP 1
-    rx.receive(b'\n', false);
+    rx.receive(b'0', false, true); // corrupt STEP 10 must never become valid STEP 1
+    rx.receive(b'\n', false, false);
     for &byte in b"STEP 3\n" {
-        rx.receive(byte, false);
+        rx.receive(byte, false, false);
     }
     assert_eq!(
         drain(&mut rx, &mut assembler),
@@ -871,17 +871,17 @@ fn production_ring_error_cannot_clear_at_an_older_queued_newline() {
 }
 
 #[test]
-fn hardware_error_newline_is_not_a_trustworthy_recovery_delimiter() {
+fn corrupt_frame_newline_is_not_a_trustworthy_recovery_delimiter() {
     let mut rx = RxBuffer::new();
     let mut assembler = LineAssembler::new();
     for &byte in b"STEP 1" {
-        rx.receive(byte, false);
+        rx.receive(byte, false, false);
     }
-    rx.receive(b'\n', true);
+    rx.receive(b'\n', false, true);
     let mut events = drain(&mut rx, &mut assembler);
     assert!(rx.has_error());
     for &byte in b"0\nPOS\n" {
-        rx.receive(byte, false);
+        rx.receive(byte, false, false);
     }
     events.extend(drain(&mut rx, &mut assembler));
     assert_eq!(events, vec![Err(Error::Line), Ok(Command::Pos)]);
@@ -910,7 +910,7 @@ fn loss_during_done_output_after_dequeuing_the_completing_lf_rejects_the_line() 
     for (index, byte) in format!("DONE {done}\r\n").bytes().enumerate() {
         tx.push(char::from(byte));
         if index == 2 {
-            console.rx.receive(b'X', true); // ISR runs during blocking TX
+            console.rx.receive(b'X', false, true); // ISR runs during blocking TX
         }
     }
     console.process(newline);
@@ -959,7 +959,7 @@ fn loss_between_parse_and_acceptance_cannot_update_motion_or_planner() {
         // Fixed-point preparation is deliberately outside the critical
         // section; the ISR can flush during that time too.
         let prepared = command.and_then(|command| console.planner.prepare(command, before));
-        console.rx.receive(b'9', true);
+        console.rx.receive(b'9', false, true);
         let accepted = console.rx.accept_if_current(generation, || {
             let prepared = prepared.unwrap();
             console.controller.apply(prepared).unwrap();
@@ -1003,7 +1003,7 @@ impl RxConsole {
 
     fn receive(&mut self, bytes: &[u8]) {
         for &byte in bytes {
-            self.rx.receive(byte, false);
+            self.rx.receive(byte, false, false);
         }
     }
 
@@ -1040,7 +1040,14 @@ impl RxConsole {
         assert!(self.rx.has_error());
         assert_eq!(self.controller.snapshot().position, position_before);
         assert_eq!(self.controller.snapshot().state, State::Idle);
-        self.receive(b"\nSTEP 3\n");
+        self.receive(b"\n");
+        self.assert_recovered_step(losses, position_before);
+    }
+
+    fn assert_recovered_step(&mut self, losses: usize, position_before: i32) {
+        // A valid recovery LF has already arrived. Send the next real command
+        // directly: an extra blank line would hide a discarded DOR-only LF.
+        self.receive(b"STEP 3\n");
         self.drain();
         assert!(!self.rx.has_error());
         let mut expected = vec![Err(Error::Line); losses];
@@ -1071,12 +1078,88 @@ fn lost_minus_digit_or_lf_flushes_three_complete_queued_commands() {
             b'\n' => b'P',
             _ => unreachable!(),
         };
-        console.rx.receive(next_byte, true);
+        console.rx.receive(next_byte, true, false);
         console.receive(if damaged == b'\n' { b"OS" } else { b"" });
-        console.assert_recovery(1, 0);
+        if damaged == b'0' {
+            // The DOR-marked LF itself terminates the damaged STEP 10. No
+            // additional delimiter belongs between it and the clean STEP 3.
+            console.assert_recovered_step(1, 0);
+        } else {
+            console.assert_recovery(1, 0);
+        }
         assert_eq!(console.planner.k(), 0);
         assert_eq!(console.planner.origin(), 0);
     }
+}
+
+#[test]
+fn dor_on_lost_digit_lf_preserves_immediately_following_command() {
+    for consume_prefix in [false, true] {
+        let mut console = RxConsole::new();
+        console.receive(b"STEP 1");
+        if consume_prefix {
+            console.drain();
+        }
+        // The '0' of STEP 10 was lost. DOR describes the gap BEFORE this
+        // intact LF, so it must recover without swallowing the clean STEP 3.
+        console.rx.receive(b'\n', true, false);
+        console.assert_recovered_step(1, 0);
+        assert_eq!(console.planner.k(), 0);
+        assert_eq!(console.planner.origin(), 0);
+    }
+}
+
+#[test]
+fn framing_or_parity_error_on_lf_discards_next_line_even_with_dor() {
+    for overrun in [false, true] {
+        for consume_prefix in [false, true] {
+            let mut console = RxConsole::new();
+            console.receive(b"STEP 1");
+            if consume_prefix {
+                console.drain();
+            }
+            // As in the DOR case, the '0' of STEP 10 never arrived. Here FE0
+            // (or UPE0, which shares the corrupt-frame input) taints LF too.
+            // Even with DOR set, that LF cannot end discard; STEP 3's LF does.
+            console.rx.receive(b'\n', overrun, true);
+            console.receive(b"STEP 3\nSTEP 4\n");
+            console.drain();
+            // The protocol has ERR LINE for transport damage, with no separate
+            // FE/UPE reply. Several flags on one read still count as one loss.
+            assert_eq!(console.events, vec![Err(Error::Line), Ok(Command::Step(4))]);
+            assert!(!console.rx.has_error());
+            assert_eq!(finish(&mut console.controller), 4);
+            assert_eq!(console.planner.k(), 0);
+        }
+    }
+}
+
+#[test]
+fn dor_mid_line_byte_is_delivered_but_discarded_until_its_lf() {
+    let mut console = RxConsole::new();
+    console.receive(b"STEP ");
+    console.drain();
+    // '-' in STEP -50 was lost. The intact '5' follows the gap and must be
+    // delivered normally, after its loss notice has cleared the partial line.
+    console.rx.receive(b'5', true, false);
+    let notice = console.rx.pop().unwrap();
+    assert!(notice.corrupted);
+    console.process(notice);
+    let after_gap = console.rx.pop().unwrap();
+    assert_eq!(
+        after_gap,
+        RxItem {
+            byte: b'5',
+            corrupted: false,
+            generation: notice.generation,
+        }
+    );
+    console.process(after_gap);
+    assert!(console.rx.has_error(), "only recovery LF clears the loss");
+    assert_eq!(console.events, vec![Err(Error::Line)]);
+    assert_eq!(console.controller.snapshot().state, State::Idle);
+    console.receive(b"0\n");
+    console.assert_recovered_step(1, 0);
 }
 
 #[test]
@@ -1086,16 +1169,16 @@ fn lost_minus_after_consumed_pos_and_step_prefix_cannot_execute_positive_step() 
     console.drain();
     assert_eq!(console.events, vec![Ok(Command::Pos)]);
     console.events.clear();
-    console.rx.receive(b'5', true); // '-' was lost after main consumed STEP's prefix
+    console.rx.receive(b'5', true, false); // '-' lost after main consumed STEP's prefix
     console.assert_recovery(1, 0);
 }
 
 #[test]
-fn lost_lf_after_consumed_step_one_drops_the_next_lines_first_dor_byte() {
+fn lost_lf_after_consumed_step_one_discards_next_line_starting_with_dor_byte() {
     let mut console = RxConsole::new();
     console.receive(b"STEP 1");
     console.drain();
-    console.rx.receive(b'P', true); // LF lost; the next line was POS\n
+    console.rx.receive(b'P', true, false); // LF lost; the next line was POS\n
     console.receive(b"OS");
     console.assert_recovery(1, 0);
 }
@@ -1105,12 +1188,12 @@ fn two_faults_with_no_clean_line_between_each_get_an_error() {
     for drain_first_notice in [false, true] {
         let mut console = RxConsole::new();
         console.receive(b"STEP 1");
-        console.rx.receive(b'9', true);
+        console.rx.receive(b'9', false, true);
         console.receive(b"\nSTEP 5"); // recovered LF, but no accepted clean line
         if drain_first_notice {
             console.drain(); // consume first notice, LF and new partial prefix
         }
-        console.rx.receive(b'9', true);
+        console.rx.receive(b'9', false, true);
         console.assert_recovery(2, 0);
     }
 }
@@ -1120,11 +1203,11 @@ fn a_second_fault_before_recovery_lf_also_gets_its_own_error() {
     for drain_first_notice in [false, true] {
         let mut console = RxConsole::new();
         console.receive(b"STEP 1");
-        console.rx.receive(b'9', true);
+        console.rx.receive(b'9', false, true);
         if drain_first_notice {
             console.drain(); // assembler is still discarding; no LF yet
         }
-        console.rx.receive(b'8', true);
+        console.rx.receive(b'8', false, true);
         console.assert_recovery(2, 0);
     }
 }
@@ -1140,13 +1223,13 @@ fn interleaved_done_output_does_not_change_input_parsing() {
     // RX continues while main is in the blocking writer. TX is a separate UART
     // direction and is never fed into LineAssembler (there is no local echo).
     for &byte in b"ROT -" {
-        rx.receive(byte, false);
+        rx.receive(byte, false, false);
     }
     commands.extend(drain(&mut rx, &mut assembler));
     let done = finish(&mut controller);
     tx.push_str(&format!("DONE {done}\r\n"));
     for &byte in b"7.5\nPOS\n" {
-        rx.receive(byte, false);
+        rx.receive(byte, false, false);
     }
     commands.extend(drain(&mut rx, &mut assembler));
     assert_eq!(tx, "DONE 1\r\n");

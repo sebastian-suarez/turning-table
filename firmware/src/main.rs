@@ -51,17 +51,22 @@ fn USART_RX() {
     // ISR is the sole RX reader. UDR0 has separate RX/TX hardware buffers, so
     // reading here does not consume or overwrite a byte being transmitted.
     let usart = unsafe { &*pac::USART0::ptr() };
-    // DOR0 = lost hardware byte, FE0 = bad stop bit, UPE0 = bad parity. Read
-    // status FIRST: reading UDR0 advances the receive FIFO and its error bits.
+    // DOR0 means frames were lost BEFORE this byte; the byte itself is intact
+    // unless FE0 (bad stop bit) or UPE0 (bad parity) also marks it corrupt.
+    // Read status FIRST: reading UDR0 advances the FIFO and its error bits.
     // Do not use the HAL reader here: it discards this error information.
     let status = usart.ucsr0a().read();
     let byte = usart.udr0().read().bits();
-    let damaged =
-        status.dor0().bit_is_set() || status.fe0().bit_is_set() || status.upe0().bit_is_set();
+    let overrun = status.dor0().bit_is_set();
+    let corrupt_frame = status.fe0().bit_is_set() || status.upe0().bit_is_set();
     // Worst case: flush queue indices, increment the u32 loss generation, and
     // enqueue one byte. No loop, buffer copy, formatting or UART write.
-    // Release bound: 74 cycles = 4.625 us at 16 MHz (see verification report).
-    interrupt::free(|cs| RX.borrow(cs).borrow_mut().receive(byte, damaged));
+    // Release bound: 83 cycles = 5.1875 us at 16 MHz (verification report).
+    interrupt::free(|cs| {
+        RX.borrow(cs)
+            .borrow_mut()
+            .receive(byte, overrun, corrupt_frame)
+    });
     // Never print in an ISR. The 32-byte queue gives main time for ufmt's
     // blocking TX; overflow is sticky and rejects input instead of changing it.
 }
@@ -244,7 +249,7 @@ fn main() -> ! {
     loop {
         // Worst case: detach the 5-byte DONE mailbox and pop one byte+u32
         // generation or one loss notice. No assembler, parser or UART TX.
-        // Release bound: 94 cycles = 5.875 us at 16 MHz.
+        // Release bound: 97 cycles = 6.0625 us at 16 MHz.
         let (done, item) =
             interrupt::free(|cs| (DONE.borrow(cs).take(), RX.borrow(cs).borrow_mut().pop()));
         if let Some(position) = done {

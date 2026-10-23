@@ -1,9 +1,10 @@
 # Phase 2 implementation verification
 
-Fix pass verified on 2026-10-22 against `docs/phase-2-spec.md` **v3.2** at
-`54aaa40`, including the v3.1 atomic-acceptance requirement at `c0e2c38`. The
-implementation being corrected starts at `19f47ca`. This report supersedes the
-previous v2-only report.
+DOR/FE/UPE correction verified on 2026-10-22 against `docs/phase-2-spec.md`
+**v3.2** at `54aaa40`, including the v3.1 atomic-acceptance requirement at
+`c0e2c38`. This working tree starts at HEAD `774e46b`, with the preceding
+firmware fix pass at `b876942`. The full suite also rechecks that pass's
+atomic acceptance, absolute NEXT targeting and ISR-owned LED behaviour.
 
 All requested host/build checks pass. Hardware acceptance and independent
 verification/reviews remain with the maintainer. This pass ran no reviews or
@@ -46,10 +47,26 @@ or serial-device access.
    spills and flash use. Replies use the prepared-command tag, avoiding retention
    of the original parser result across planning. These are size/layout changes
    with no extra protocol behaviour.
+7. USART RX now passes DOR0 separately from FE0/UPE0 to the production ring.
+   DOR-only means a gap **before an intact byte**: flush the old queue, increment
+   the loss generation once, then deliver that byte normally after its loss
+   notice. If it is LF, it immediately ends discard, so a lost `0` in
+   `STEP 10\n` cannot swallow the immediately following `STEP 3\n`. A mid-line
+   DOR-only byte reaches the assembler in discard mode; only its subsequent LF
+   recovers, and popping that byte does not clear the sticky loss early.
+   FE0/UPE0, with or without DOR0, corrupt the byte itself: drop it, even if it
+   reads as LF, and discard through the next intact LF. One UDR0 read with any
+   combination of these flags produces **one ERR LINE**, with no additional
+   framing/parity reply: LINE is the spec's transport-error response. Recovery
+   LF produces no duplicate. The generation acceptance guard is unchanged.
+   Ordinary damaged-line tails are still filtered in the ISR to avoid filling
+   the ring during discard. Combining the three side-effect-free flush flags
+   with boolean bitwise OR avoids a duplicated AVR flush path and keeps flash
+   within 8 KiB.
 
 ## Verification results
 
-Inside `turntable-core/`, plain `cargo test` passes **34 tests**, **0 failed**,
+Inside `turntable-core/`, plain `cargo test` passes **37 tests**, **0 failed**,
 and 0 doc tests. The crate remains dependency-free, no_std and independent of the
 firmware's target and nightly. These commands also pass:
 
@@ -75,13 +92,13 @@ shared output path.
 
 | Release build | .text | .data | .bss | Flash (.text + .data) | Static SRAM (.data + .bss) |
 |---|---:|---:|---:|---:|---:|
-| Nano (default) | 7930 B | 192 B | 67 B | 8122 / 8192 B | 259 / 384 B |
-| UNO | 7930 B | 192 B | 67 B | 8122 / 8192 B | 259 / 384 B |
+| Nano (default) | 7942 B | 192 B | 67 B | 8134 / 8192 B | 259 / 384 B |
+| UNO | 7942 B | 192 B | 67 B | 8134 / 8192 B | 259 / 384 B |
 
-Flash headroom is **70 B** and static-SRAM headroom is **125 B** within the
-Phase 2 budgets. Compared with the previous implementation's 8042 B flash and
-252 B static SRAM, the complete fix pass adds **80 B flash and 7 B SRAM**.
-The permitted 512 B flash overrun is **unused: 0 B over 8 KiB**. Stack remains
+Flash headroom is **58 B** and static-SRAM headroom is **125 B** within the
+Phase 2 budgets. Compared with `b876942`'s 8122 B flash and 259 B static SRAM,
+this correction adds **12 B flash and 0 B SRAM**.
+The permitted 256 B flash overrun is **unused: 0 B over 8 KiB**. Stack remains
 additional to static SRAM: assembler, planner, parser/formatter temporaries,
 call frames and interrupt saves require hardware high-water measurement.
 
@@ -109,13 +126,13 @@ below the nominal 57600 8N1 byte interval `10 / 57600 = 173.611 us`.
 |---|---|---|---:|---:|
 | Dispatch snapshot | Copy state, i32 position and period (6 bytes), borrow check | `0x36e` → `0x396` | 21 | 1.3125 us |
 | Dispatch acceptance | Detach DONE; compare u32 RX generation; bounded i32 controller checks/updates; copy planner k/origin/stops; copy motion snapshot | `0x3d6` → `0x8ec` | 293 | 18.3125 us |
-| Main dequeue | Detach DONE; pop one byte+generation or one loss notice; update queue metadata | `0xf4a` / `0x10e4` → `0x101c` | 94 / 88 | 5.875 / 5.5 us |
-| USART RX | Flush indices/increment generation if needed; discard or enqueue one byte | `0xb50` → `0xbf0` | 74 | 4.625 us |
-| TC2 tick | Small countdowns, one i32 step, table lookup, DONE mailbox, activity flag | `0xc48` → `0xdd4` | 135 | 8.4375 us |
+| Main dequeue | Detach DONE; pop one byte+generation or one loss notice; update queue metadata; clear sticky loss only on LF | `0xf50` / `0x10f0` → `0x1028` | 97 / 91 | 6.0625 / 5.6875 us |
+| USART RX | Flush indices/increment generation if needed; discard corrupt frame or enqueue intact DOR-only byte/recovery LF | `0xb50` → `0xbf6` | 83 | 5.1875 us |
+| TC2 tick | Small countdowns, one i32 step, table lookup, DONE mailbox, activity flag | `0xc4e` → `0xdda` | 135 | 8.4375 us |
 
 No normal critical-section path contains a loop, formatting call, UART write,
 wide multiply or division. Full ISR bodies, including compiler register saves,
-GPIO writes and RETI, have conservative bounds of **146 cycles / 9.125 us** for
+GPIO writes and RETI, have conservative bounds of **155 cycles / 9.6875 us** for
 USART RX and **257 cycles / 16.0625 us** for TC2; hardware interrupt entry and the
 vector jump are additional. Compiler-generated stack-pointer masking sequences
 are 3 cycles / 0.1875 us; the peripheral-take startup section is 10 cycles /
@@ -137,6 +154,9 @@ guard, Planner and Controller, with the simulated ISR paused at explicit points:
 | Completing LF dequeued, RX loss injected while printing previous DONE | Stale NEXT never moves or advances k; old DONE stays intact; one ERR LINE; next clean STEP executes |
 | Loss after parse/preparation, before acceptance, for all eight commands | No controller/planner mutation or stale acceptance/reply; one ERR LINE; next clean STEP executes |
 | Lost `-` of STEP -5, lost digit of STEP 10, lost LF after STEP 1, with three complete commands queued ahead | All queued/pre-loss/altered commands rejected; lost LF detected by DOR on the next line's first byte; one ERR LINE; recovery executes |
+| Lost `0` of `STEP 10\n`, DOR-only on its LF, immediately followed by `STEP 3\n`; prefix queued or already assembled | Exactly one ERR LINE; no STEP 10/altered STEP 1; STEP 3 executes to position 3, with no extra recovery newline; existing queued-command matrix also removes that extra newline |
+| Same lost digit, but FE/UPE on LF, with and without DOR; then `STEP 3\nSTEP 4\n` | Corrupt LF is dropped; STEP 3 discarded through its LF; STEP 4 executes to position 4; exactly one ERR LINE, no separate framing/parity reply |
+| DOR-only on mid-line `5` after a lost `-` in `STEP -50\n` | Ring delivers normal `5` after one loss notice; assembler discards it and the tail through LF; sticky loss survives popping `5`; next STEP 3 executes |
 | POS consumed and STEP prefix already assembled before lost `-` | Earlier accepted POS retained; STEP 5 cannot execute; one ERR LINE; recovery executes |
 | STEP 1 prefix consumed; LF lost; next line's first byte carries DOR | STEP 1 cannot execute; damaged following line dropped through LF; recovery executes |
 | Two faults, no accepted clean line between; notices drained or still pending | Two ERR LINE notices; no stale motion; recovery executes |
@@ -145,7 +165,7 @@ guard, Planner and Controller, with the simulated ISR paused at explicit points:
 | Manual STEP 5 between NEXTs, both ratios and nine multi-stop counts, nonzero origin | Following NEXT returns to absolute target; revolution closes at origin + round(ratio); immediate zero-distance completion handled |
 
 Existing transport checks also cover 32-byte FIFO wrap, overflow without LF,
-overflow on LF itself, stale queued delimiters, hardware-damaged LF, overlong
+overflow on LF itself, stale queued delimiters, FE/UPE-damaged LF, overlong
 lines and interleaved clean DONE output. The former test asserting that a fully
 dequeued line survives a later RX loss has been replaced with the opposite v3.1
 regressions above.

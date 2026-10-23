@@ -44,10 +44,14 @@ impl RxBuffer {
         }
     }
 
-    /// ISR entry, once for each UDR0 read. A hardware error belongs to that
-    /// specific byte (firmware must read UCSR0A *before* UDR0).
-    pub fn receive(&mut self, byte: u8, hardware_error: bool) {
-        if hardware_error || self.len as usize == RX_CAPACITY {
+    /// ISR entry, once for each UDR0 read (read UCSR0A *before* UDR0).
+    /// `overrun` is DOR0: one or more frames were lost BEFORE this byte.
+    /// `corrupt_frame` is FE0 or UPE0: this byte itself cannot be trusted.
+    /// Both can be set, but one UDR0 read still produces only one loss notice.
+    pub fn receive(&mut self, byte: u8, overrun: bool, corrupt_frame: bool) {
+        // These flag reads have no side effects. Combining all three avoids
+        // duplicating the AVR flush path for hardware errors versus overflow.
+        if overrun | corrupt_frame | (self.len as usize == RX_CAPACITY) {
             // A plain global error bit is insufficient: the queue could hold
             // an older clean newline followed by the prefix of the bad line.
             // Clearing at that older newline could execute a truncated STEP.
@@ -65,15 +69,24 @@ impl RxBuffer {
             self.sticky_error = true;
             self.discarding = true;
         }
+        // FE/UPE taint even a byte that reads as LF, including when DOR is
+        // also set. It must never masquerade as the recovery delimiter.
+        if corrupt_frame {
+            return;
+        }
         if self.discarding {
-            if byte != b'\n' || hardware_error {
+            if byte == b'\n' {
+                // An intact LF, including DOR-only or overflow on LF, ends
+                // the damaged line. Queue it so main's assembler recovers too.
+                self.discarding = false;
+            } else if !overrun {
+                // Keep filtering the rest of a damaged line in the ISR so a
+                // long tail cannot fill the ring and manufacture more losses.
                 return;
             }
-            // This trustworthy delimiter is the first queued byte after the
-            // purge, even if the original overflow byte was itself '\n'. It
-            // is a recovery marker: the loss notices taint main's partial
-            // line before it consumes LF. Clean input queues *behind* it.
-            self.discarding = false;
+            // A DOR-only byte is intact and follows the gap: deliver it even
+            // mid-line. The ordered loss notice puts LineAssembler in discard
+            // mode first, so this byte cannot execute a truncated command.
         }
         let tail = (self.head + self.len) & 31;
         self.bytes[tail as usize] = byte;
@@ -97,11 +110,13 @@ impl RxBuffer {
         let byte = self.bytes[self.head as usize];
         self.head = (self.head + 1) & 31;
         self.len -= 1;
-        // While sticky_error is set, the first queued byte is necessarily the
-        // recovery newline. Clearing here cannot accidentally clear an error
-        // at a delimiter that preceded the fault. Queue, marker and clear are
-        // one atomic operation under firmware's mutex.
-        self.sticky_error = false;
+        // A DOR-only mid-line byte can precede the recovery LF in the queue.
+        // Consuming that valid byte must not clear the sticky loss early.
+        // Every pre-loss delimiter was flushed, so only a post-loss LF can
+        // clear it. Queue, marker and clear are atomic under firmware's mutex.
+        if byte == b'\n' {
+            self.sticky_error = false;
+        }
         Some(RxItem {
             byte,
             corrupted: false,
@@ -136,12 +151,12 @@ mod boundary_tests {
         let mut rx = RxBuffer::new();
         rx.loss_generation = u32::MAX - 1;
         rx.notified_generation = u32::MAX - 1;
-        rx.receive(b'\n', false);
+        rx.receive(b'\n', false, false);
         let before_loss = rx.pop().unwrap();
         assert_eq!(rx.accept_if_current(before_loss.generation, || 7), Some(7));
 
-        rx.receive(b'X', true);
-        rx.receive(b'Y', true); // wraps to zero, with both notices still pending
+        rx.receive(b'X', false, true);
+        rx.receive(b'Y', false, true); // wraps to zero, both notices still pending
         assert_eq!(rx.accept_if_current(before_loss.generation, || 7), None);
         for generation in [u32::MAX, 0] {
             let notice = rx.pop().unwrap();
@@ -149,7 +164,7 @@ mod boundary_tests {
             assert_eq!(notice.generation, generation);
         }
         assert_eq!(rx.pop(), None);
-        rx.receive(b'\n', false);
+        rx.receive(b'\n', false, false);
         let recovery = rx.pop().unwrap();
         assert!(
             !recovery.corrupted,

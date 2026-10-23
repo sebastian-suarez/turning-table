@@ -136,7 +136,7 @@ def main():
     ap.add_argument("--interval", type=float, default=0.2)
     ap.add_argument("--listen", type=float, default=0.0, help="only print what the board sends for N seconds")
     ap.add_argument("--no-boot-wait", action="store_true", help="do not wait 2 s for the reset banner")
-    args = ap.parse_args()
+    args = ap.parse_intermixed_args()  # options may follow the command list, e.g. ZERO "STOPS 36" --repeat 360 NEXT
 
     port = Port(args.port, args.baud)
     if not args.no_boot_wait:

@@ -107,12 +107,13 @@ There is no `cargo test` for the firmware (`[[bin]] test = false`; no test harne
   stepped from one TC2 CTC interrupt (1 ms tick, step period in ticks), coils released when idle. Half-steps per revolution is one
   named constant, measured in Phase 2, not assumed: 28BYJ-48 units ship with either a 63.68395:1 gearbox
   (4075.77 half-steps) or an exact 64:1 one (4096); the wrong constant drifts 1.78° per revolution. Accumulate
-  the fractional remainder in integers across stops so N stops close exactly. Motor and servo power from an
-  external 5 V supply with common ground, never the Nano's 5 V pin, not even for a test.
+  the fractional remainder in integers across stops so N stops close exactly. Motor and servo power from the
+  18650 power-bank shield's 5 V output (`hardware/BOM.md` item 2; slide switch on HOLD) with common ground, never
+  the Nano's 5 V pin, not even for a test.
 - The console protocol is line-based ASCII, one command per `\n`, so it can be typed into the `cargo run` console.
   Format with `ufmt`, never `core::fmt` (flash and RAM).
 - `panic = "abort"` plus `panic-halt`: a panic freezes the board and the LED stops toggling. No heap.
 - Every string literal lives in SRAM (`.data`): Rust has no progmem by default, and the two banner strings already
   cost 32 of the 2048 bytes. Keep protocol strings terse, watch `.data` in `avr-size -A`, and reach for the
   `avr-progmem` crate before adding help text or long error messages.
-- Motors and servos are never powered from the Nano's 5 V pin while on USB; external 5 V, common ground.
+- Motors and servos are never powered from the Nano's 5 V pin while on USB; the shield's 5 V, common ground.

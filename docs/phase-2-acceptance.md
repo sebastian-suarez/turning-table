@@ -6,11 +6,15 @@ commands and what to expect. Record the readings at the end in `docs/phase-2-ver
 ## 0. Before you start
 
 - Stepper wired with the USB cable unplugged (`docs/bring-up.md`, section 9): ULN2003 IN1..IN4 to D2..D5, driver
-  `-` to a Nano GND, driver `+` and the motor from the external 5 V supply, the supply's GND also to a Nano GND.
+  `+` to the red wire soldered to a `5V` pad of the 18650 power-bank shield, driver `-` to the black wire from the
+  `-` pad of the same pair and to a Nano GND (common ground).
+- Shield ready: cell charged (LEDs), slide switch on HOLD (the position in which the `5V` pads still read 5 V after
+  two minutes with nothing connected), output switched on with the button. In AUTO the shield switches off a few
+  seconds after each move and the next command moves nothing.
 - Protractor sheet (`hardware/measure/protractor-190mm-a4.svg`, printed at 100 %) taped flat with the motor shaft
   through its centre hole; the card pointer (`pointer-95mm.svg`) pressed onto the shaft. The motor should be held
   down (tape or a clamp) so it cannot creep.
-- Power up in this order: 5 V supply on, then the USB cable. `ls /dev/cu.*` must show the board again.
+- Power up in this order: shield on (button), then the USB cable. `ls /dev/cu.*` must show the board again.
 
 ## 1. Flash the Phase 2 firmware and talk to it
 
@@ -35,8 +39,10 @@ After `turntable-firmware boot`, type commands and press Enter (what you type is
 | `ERR BUSY` | | you typed a move while one was running; wait for `DONE` |
 | `ERR LINE` | | a line was lost or corrupted on the wire; retype the command |
 
-If the motor buzzes without turning, two of IN1..IN4 are swapped; if nothing happens, check the 5 V supply and the
-common ground. The sign of `STEP` is simply a direction: note which way positive turns and keep that convention.
+If the motor buzzes without turning, two of IN1..IN4 are swapped; if nothing happens, check that the shield is on
+(LEDs lit) and the common ground; if moves stop working after a pause while the console still answers, the shield
+switched itself off: set the slide switch to HOLD and press the button. The sign of `STEP` is simply a direction:
+note which way positive turns and keep that convention.
 
 Leave the console with Ctrl-C before running the helper script below: the port is exclusive.
 
@@ -60,7 +66,8 @@ python3 hardware/measure/lockstep.py /dev/cu.usbserial-A5069RR4 "SPEED 10" "STEP
 ```
 
 Watch the pointer pass 0 ten times, then read where it stops. Realign, run at `SPEED 4` (2.7 min), realign, run at
-`SPEED 2` (82 s); then a second round of each speed. Write down the six readings and the supply voltage.
+`SPEED 2` (82 s); then a second round of each speed. Write down the six readings and the shield's 5 V reading at
+the ULN2003 while the motor runs.
 
 | Result | Meaning | Do |
 |---|---|---|

@@ -19,6 +19,12 @@ Legend: [x] done, [~] in progress, [ ] todo. Written 2026-10-22; decisions recor
   of photos. Options in Phase 4.
 - **Board confirmed:** chip marking ATMEGA328PB; FTDI USB-serial at `/dev/cu.usbserial-A5069RR4`; bootloader
   answers at 115200 baud with signature `1E 95 0F` (328P) and not at 57600, so the `nano-new` preset applies.
+- **D4 Power: the 18650 power-bank shield already on hand** (decided 2026-10-22 from photos of the board: single
+  cell, 5 V 3 A and 3 V 1 A outputs, USB-C and micro-USB charging, XB8608 cell protection, push button, HOLD/AUTO
+  slide switch; three boards and three Bengala 2200 mAh cells). A red/black pair soldered to one 5V header pair
+  feeds the ULN2003 boards, ground common with the Nano; slide switch on HOLD so the output survives the idle time
+  between moves (the firmware releases the coils); charged between sessions, never while the table runs. Replaces
+  the 5 V 3 A mains adapter and the barrel-jack adapters that were in the BOM.
 
 ## Phases
 
@@ -30,7 +36,8 @@ Legend: [x] done, [~] in progress, [ ] todo. Written 2026-10-22; decisions recor
 1b. **Capture trial** [x] 2026-10-22. Phone on a tripod, RealityScan Object Mode with the Capture Interval Timer,
    object turned by hand: the user reports a recognisable model. The interval-timer flow is the design basis for
    Phase 3.
-2. **Stepper drive** [ ]. ULN2003 IN1..IN4 on D2..D5, motor powered from external 5 V (common ground). Half-step
+2. **Stepper drive** [ ]. ULN2003 IN1..IN4 on D2..D5, motor powered from the shield's 5 V output (D4, common
+   ground). Half-step
    sequencer (8-step table) on a TC2 CTC interrupt, non-blocking, coils released after each move; integer error
    accumulation so N stops add up to exactly one revolution. Commands `STEP <n>`, `ROT <deg>`. First measurement:
    the gearbox ratio. 28BYJ-48 units come as 63.68395:1 (4075.77 half-steps per revolution) or exactly 64:1
@@ -65,10 +72,12 @@ Legend: [x] done, [~] in progress, [ ] todo. Written 2026-10-22; decisions recor
    bearings with printed spacers, hard stops so the arm cannot swing the phone into the platter, an index marker or
    switch for homing the arm if open-loop drift shows. Phone clamp: screw clamp for the range above, lens on the
    arm's radial line, USB-C cutout. Platter: 250 mm single piece (a two-segment 300 mm variant if the cap needs it),
-   hub on two stacked 608ZZ so the motor shaft carries no platter weight, marker ring on the rim. Parts:
+   hub on two stacked 608ZZ so the motor shaft carries no platter weight, marker ring on the rim. Electronics bay
+   in the base for the Nano, both ULN2003 boards and the shield (D4), with the shield's button, slide switch, LEDs
+   and charging ports reachable from outside and the cell removable without tools. Parts:
    `hardware/BOM.md`. Firmware impact: second ULN2003 on D6, D7, D8, D10 (D9 stays reserved for an optional servo),
    a second controller instance in the same 1 kHz tick, `ARM <deg>` command (Phase 3 scan mode runs K rings × N
-   stops). Exit: assembled rig on external 5 V, strain-relieved cables, arm balanced, Phase 2 acceptance repeated
+   stops). Exit: assembled rig on the shield's 5 V, strain-relieved cables, arm balanced, Phase 2 acceptance repeated
    with the platter loaded, and the three ring angles repeatable within ±0.5°.
 5. **Scan pipeline** [ ]. RealityScan procedure: Object Mode, Capture Interval Timer matched to the table's pause,
    featureless background, diffuse fixed lighting, locked phone exposure, 36 stops × 3 heights; compare 24/36/72

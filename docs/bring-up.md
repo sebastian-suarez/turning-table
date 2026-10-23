@@ -185,16 +185,23 @@ Wire with the USB cable unplugged. Pin plan (also in `CLAUDE.md`):
 |---|---|---|
 | ULN2003 board | IN1, IN2, IN3, IN4 | D2, D3, D4, D5 |
 | ULN2003 board | `-` (GND) | GND |
-| ULN2003 board | `+` (5 V) | external 5 V supply (see below), never the Nano's `5V` pin |
+| ULN2003 board | `+` (5 V) | the shield's `5V` pad (see below), never the Nano's `5V` pin |
 | 28BYJ-48 | white 5-pin plug | the white socket on the ULN2003 board |
-| SG90 | brown (GND), red (5 V), orange (signal) | GND, external 5 V (same supply), D9 |
+| SG90 (spare, only if ever wired) | brown (GND), red (5 V), orange (signal) | GND, the shield's 5 V (same pair), D9 |
 
 Power: the stepper draws about 240 mA and the SG90 spikes to about 650 mA when it starts or stalls. The Nano's
 `5V` pin is fed from the USB port through a diode and shares the Mac's 500 mA budget with the board itself, so
 even a short test can brown out the Nano (random resets, garbage on the console) or trip the Mac's USB
-protection. Use a regulated 5 V supply of at least 2 A for both actuators: a breadboard power module set to 5 V
-(often in starter kits) or a 5 V USB charger with a breakout cable. Its GND must be wired to a Nano GND pin
-(common ground); only the signal wires and GND go between the supply side and the Nano. Read the voltage printed
-on the 28BYJ-48 label: 5 V and 12 V variants exist and look identical; kits normally ship the 5 V one, and 12 V
-into a 5 V motor burns it. The Phase 2 firmware adds the half-step sequencer and the `STEP`/`ROT` console commands;
-`docs/PLAN.md` has the acceptance test.
+protection. The supply is the 18650 power-bank shield (`hardware/BOM.md`, item 2), a boost converter with its own
+cell protection that gives a regulated 5 V at up to 2.2 A continuous. Solder a red and a black 22 AWG wire to one
+of its three `5V` header pairs (`+` and `-` are printed next to the pads): red to the ULN2003 `+`, black to the
+ULN2003 `-` and on to a Nano GND pin (common ground); only the signal wires and GND go between the supply side and
+the Nano. Before the first session: charge the cell through the USB-C or micro-USB port (the LEDs show the level),
+press the button to switch the output on, and put the small slide switch next to the micro-USB port in the position
+where the `5V` pads still read 5 V on a multimeter after two minutes with nothing connected. That position is HOLD;
+in the other one (AUTO) the shield switches itself off a few seconds after the firmware releases the coils, and the
+next move does nothing while the console still answers `OK` and `DONE`. Do not plug the charger in while the table
+runs: the output drops out for about half a second. Read the voltage printed on the 28BYJ-48 label: 5 V and 12 V
+variants exist and look identical; kits normally ship the 5 V one, and 12 V into a 5 V motor burns it. The Phase 2
+firmware adds the half-step sequencer and the `STEP`/`ROT` console commands; `docs/phase-2-acceptance.md` walks
+through the acceptance test.

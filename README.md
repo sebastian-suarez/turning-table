@@ -13,8 +13,8 @@ Phases, decisions and progress live in [`docs/PLAN.md`](docs/PLAN.md).
 |---|---|
 | Arduino Nano clone, ATmega328PB (fallback: Arduino UNO, ATmega328P) | controller and USB serial console |
 | 28BYJ-48 stepper on a ULN2003 driver board | platter drive, IN1..IN4 on D2..D5 |
-| SG90 servo through a printed 3:1 gear | swings the counterweighted camera arm, signal on D9 |
-| Regulated external 5 V supply, ground common with the Nano | powers the motor and the servo; never the Nano's 5 V pin |
+| Second 28BYJ-48 on a ULN2003 board through a printed ~8:1 reduction | swings the counterweighted camera arm, IN1..IN4 on D6, D7, D8, D10 |
+| 18650 power-bank shield (5 V 3 A boost output with cell protection), ground common with the Nano | powers the motors; never the Nano's 5 V pin |
 | Phone running RealityScan (Object Mode, capture interval timer) | capture and reconstruction |
 | Creality Hi printer (260 × 260 × 300 mm) | prints the parametric OpenSCAD design |
 
@@ -35,9 +35,10 @@ Phases, decisions and progress live in [`docs/PLAN.md`](docs/PLAN.md).
 
 ## Status
 
-Research, board bring-up and a capture trial with RealityScan are done. Next is Phase 2, the stepper drive, whose
-specification and acceptance suite are frozen in [`docs/phase-2-spec.md`](docs/phase-2-spec.md). Scan mode, the
-mechanical design, the scan procedure and hardening follow; see the plan.
+Research, board bring-up and a capture trial with RealityScan are done. The Phase 2 stepper drive is implemented
+and verified on the host against [`docs/phase-2-spec.md`](docs/phase-2-spec.md); its hardware acceptance
+([`docs/phase-2-acceptance.md`](docs/phase-2-acceptance.md)) is next. Scan mode, the mechanical design, the scan
+procedure and hardening follow; see the plan.
 
 ## Build and flash
 

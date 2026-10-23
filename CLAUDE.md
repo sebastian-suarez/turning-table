@@ -25,6 +25,7 @@ mechanical design is custom, as parametric OpenSCAD in `hardware/cad/`, printed 
 brew tap osx-cross/avr && brew trust osx-cross/avr   # Homebrew 7 refuses to load formulae from untrusted taps
 brew install avr-gcc avrdude                           # avr-gcc = GCC 9 (rustc's linker + libgcc), avrdude 8
 cargo +stable install --locked ravedude                # avrdude wrapper that `cargo run` uses
+brew install --cask openscad@snapshot                  # `openscad` CLI for hardware/cad/ (the plain `openscad` cask is disabled since 2026-09-01)
 ```
 
 The pinned nightly and its components (`rust-src`, `clippy`, `rustfmt`, `rust-analyzer`) install themselves from

@@ -98,7 +98,6 @@ shared output path.
 Flash headroom is **58 B** and static-SRAM headroom is **125 B** within the
 Phase 2 budgets. Compared with `b876942`'s 8122 B flash and 259 B static SRAM,
 this correction adds **12 B flash and 0 B SRAM**.
-The permitted 256 B flash overrun is **unused: 0 B over 8 KiB**. Stack remains
 additional to static SRAM: assembler, planner, parser/formatter temporaries,
 call frames and interrupt saves require hardware high-water measurement.
 
@@ -199,3 +198,13 @@ regressions above.
 - No hardware acceptance was run. Gearbox calibration, released-position
   accuracy, loaded motion, physical closure, lockstep serial traffic, measured
   timing under traffic and stack high-water use remain for the maintainer.
+
+## Backlog from the round-2 reviews (not blocking hardware acceptance)
+
+- `sticky_error` / `has_error()` in `turntable-core/src/rx.rs` have no production reader: gate them behind
+  `#[cfg(test)]` and drop the branch from `pop()` (saves one `.bss` byte and ISR instructions).
+- The NEXT absorption test covers stops 2..720; add N = 1 over two revolutions.
+- The host tests re-implement the firmware's acceptance sequence (`RxConsole::process`); move the pure
+  acceptance step into `turntable-core` and call it from both `dispatch` and the tests to remove drift risk.
+- Phase 2 leaves 58 B under its 8 KiB guideline; the arm's second controller instance needs the Phase 3 budget
+  (16 KiB proposed, hardware limit 30720 B).

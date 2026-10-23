@@ -81,14 +81,23 @@ def wait_for(port, prefixes, timeout, label):
             return line
 
 
-def run_command(port, cmd, move_timeout):
+def run_command(port, cmd, move_timeout, retried=False):
+    """Send one command and wait for its reply (and DONE after a move).
+
+    Spec v3.3 host rule: ERR LINE (solicited or not) or a reply timeout right after one means the line was
+    consumed as the loss-recovery marker; resend the command once.
+    """
     verb = cmd.split()[0].upper()
     port.send(cmd)
     if verb in ("POS", "STATUS"):
-        return wait_for(port, (verb, "ERR"), 5, verb)
-    reply = wait_for(port, ("OK", "ERR"), 5, "OK/ERR")
-    if reply == "OK" and verb in MOTION:
-        return wait_for(port, ("DONE", "ERR"), move_timeout, "DONE")
+        reply = wait_for(port, (verb, "ERR"), 5, verb)
+    else:
+        reply = wait_for(port, ("OK", "ERR"), 5, "OK/ERR")
+        if reply == "OK" and verb in MOTION:
+            reply = wait_for(port, ("DONE", "ERR"), move_timeout, "DONE")
+    if reply in (None, "ERR LINE") and not retried:
+        print(f"{port.stamp()}  .. line lost on the wire, resending {cmd!r} once")
+        return run_command(port, cmd, move_timeout, retried=True)
     return reply
 
 

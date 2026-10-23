@@ -45,8 +45,10 @@ Legend: [x] done, [~] in progress, [ ] todo. Written 2026-10-22; decisions recor
    <pause_ms>` runs K ring angles × N platter stops with a pause matched to RealityScan's interval timer (or a
    manual tap) and an LED cue; a pushbutton starts or advances; settings kept in EEPROM; the serial console is
    the UI. `turntable-core/` holds the command parser and motion math with host
-   `cargo test`. A `host/` CLI is optional later (not needed for the RealityScan flow). Exit: a 36-stop scan runs
-   unattended from one command.
+   `cargo test`. A `host/` CLI is optional later (not needed for the RealityScan flow). Host rule from the Phase 2
+   review: `ERR LINE` means resend the last unacknowledged command, and so does a reply timeout right after an
+   unsolicited `ERR LINE`. Flash budget for Phase 3: 16 KiB (Phase 2 used 8134 B of its 8 KiB guideline; the
+   hardware limit is 30720 B). Exit: a 36-stop scan runs unattended from one command.
 4. **Mechanical, custom** [ ]. Printer: Creality Hi, 260 × 260 × 300 mm. Parametric CAD in `hardware/cad/`
    (OpenSCAD, STL exported from the command line). Inputs (2026-10-22): the kit has exactly one 28BYJ-48 + ULN2003
    and one SG90; phones: iPhone Air (165 g, 156.2 × 74.7 × 5.6 mm) or iPhone 18 Pro Max (249 g, 163.4 × 78 ×

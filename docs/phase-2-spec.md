@@ -1,4 +1,4 @@
-# Phase 2 spec: stepper drive (v3.2, after two plan attacks and the first implementation reviews, 2026-10-22)
+# Phase 2 spec: stepper drive (v3.3, after two plan attacks and two implementation review rounds, 2026-10-22)
 
 Acceptance suite first; an implementation must pass it on the host before it is flashed. v1 → v2 (Sol attack):
 cumulative closure targets, buffered RX with corruption rejection, one-move-in-flight policy, numeric bounds, a
@@ -88,7 +88,12 @@ Motor and ULN2003 `+` from an external 5 V supply, GND common with the Nano.
   the reception of its terminating `\n` and its acceptance by the controller (checked in the same critical
   section that applies it, e.g. with a loss generation counter); a line already dequeued or parsed when a loss
   happens is discarded like queued data, so that after `ERR LINE` a host can resend everything it has not seen
-  acknowledged without any command running twice (v3.1 clarification, 2026-10-22). Rationale: at 57600 a byte arrives every 174 µs and the blocking `ufmt` writer can hold the main
+  acknowledged without any command running twice (v3.1 clarification, 2026-10-22).
+- `ERR LINE` timing (v3.3 decision, 2026-10-22, after the round-2 review): the notice is emitted as soon as the
+  loss is dequeued, which can be unsolicited while the board is idle (a noise frame, a ring overflow), and the
+  line in flight or the next line received is consumed as the recovery marker without a reply of its own. Host
+  rule: any `ERR LINE`, solicited or not, means "resend the last unacknowledged command"; a reply timeout right
+  after an `ERR LINE` means the same. No damaged or stale line can execute in either case. Rationale: at 57600 a byte arrives every 174 µs and the blocking `ufmt` writer can hold the main
   loop longer than the 2-byte hardware FIFO survives; a corrupted line must never be executed as a different valid
   command, and clearing the error at the *next queued* newline would let `STEP -5` with a lost `-` run as
   `STEP 5` when clean lines were queued ahead of it.
@@ -117,7 +122,8 @@ Motor and ULN2003 `+` from an external 5 V supply, GND common with the Nano.
    the loss executes; a 40-byte burst without newline yields one `ERR LINE`; interleaved `DONE` output does not
    change parsing.
 6. Build: `nano` and `uno` features build with clippy clean; release `.text + .data` ≤ 8 KiB, `.data + .bss`
-   ≤ 384 B (ring buffer included).
+   ≤ 384 B (ring buffer included). This is the Phase 2 headroom guideline, met with 58 B and 125 B to spare;
+   Phase 3 sets its own budget (16 KiB flash proposed) against the hardware limits of 30720 B and 2048 B.
 
 ## Hardware acceptance (after the suite passes; the first real measurements)
 

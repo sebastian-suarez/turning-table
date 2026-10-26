@@ -93,10 +93,8 @@ There is no `cargo test` for the firmware (`[[bin]] test = false`; no test harne
   the user's explicit exception to their no-comments rule.
 - **Commits on `main` are authorized without asking** (spec freezes, review fixes, merges). No AI attribution
   anywhere, per the user's global rule.
-- **Who writes code.** Codex GPT-6.1 Sol implements from a spec that has survived an adversarial attack
-  (`docs/phase-N-spec.md`), at `max` effort, launched with `codex exec` directly because the plugin wrapper caps
-  effort at `xhigh`; Codex GPT-6 Astra attacks the spec and reviews the result (`~/.claude/scripts/astra-review.sh`);
-  Claude verifies (tests, builds, hardware acceptance) and runs the artifact-only review; no rival implementations.
+- **Who writes code.** Implementation follows the routing rules in the user's global instructions ("Model
+  routing"). Firmware work is Tier 2 and goes through `/spec`. One implementation is kept, never rival ones.
 
 ## Firmware conventions
 

@@ -1,9 +1,9 @@
 # Phase 2 spec: stepper drive (v3.4, after two plan attacks and two implementation review rounds, 2026-10-22; acceptance amended 2026-10-26)
 
-Acceptance suite first; an implementation must pass it on the host before it is flashed. v1 → v2 (Sol attack):
+Acceptance suite first; an implementation must pass it on the host before it is flashed. v1 → v2 (first plan attack):
 cumulative closure targets, buffered RX with corruption rejection, one-move-in-flight policy, numeric bounds, a
 host-testable motion controller, `DONE` defined as "released and settled", rate-independent gearbox calibration.
-v2 → v3 (Astra attack): loss recovery tied to the loss position (queued data flushed), a bound on interrupt-disabled
+v2 → v3 (second plan attack): loss recovery tied to the loss position (queued data flushed), a bound on interrupt-disabled
 sections with a timing test under serial traffic, and a calibration procedure that realigns the physical start.
 
 ## Scope
@@ -153,6 +153,6 @@ Motor and ULN2003 `+` from an external 5 V supply, GND common with the Nano.
 ## Delivery
 
 Per the routing rule for a spec'd feature with an acceptance suite: freeze this spec and the suite in a commit,
-then one implementation by Claude and one by Codex, each in its own worktree branched from that commit; run the
+then one implementation by each of two writers, each in its own worktree branched from that commit; run the
 suite and the build checks on both; flash and run the hardware acceptance on the survivor(s); keep the one that
-passes, Codex's if both do. One retry each if neither passes, then stop and ask.
+passes, the second writer's if both do. One retry each if neither passes, then stop and ask.

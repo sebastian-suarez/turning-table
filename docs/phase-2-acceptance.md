@@ -80,21 +80,21 @@ python3 hardware/measure/lockstep.py /dev/cu.usbserial-A5069RR4 STATUS POS
 
 ## 3. Gearbox calibration (six runs, about 25 minutes of motor time)
 
-Align the pointer onto the 0° tick **always arriving in the positive direction**: in the console, `STEP 50`
-repeatedly until it sits on 0; if it passes 0, `STEP -300` and come up again. Leave the console, then:
+Do all six runs **in the `cargo run` console**, without leaving it. Leaving the console resets the board, and a
+reset forgets which coil pattern the motor rests on (the sequencer starts again at pattern 0): the first move after
+a reset can jump the shaft by up to 4 half-steps, 0.35°, before any counting starts, which would bias the reading.
 
-```sh
-python3 hardware/measure/lockstep.py /dev/cu.usbserial-A5069RR4 "SPEED 10" "STEP 40760"   # 6.8 min
-```
+1. Take up the gearbox backlash with one positive move, `STEP 80`, then read the pointer's **starting angle** to
+   the nearest 0.5°. It does not have to be 0.
+2. Type `SPEED 10`, then `STEP 40760` (6.8 min). The pointer passes its start ten times and stops; wait for
+   `DONE`, then read the end angle. The result is **end minus start**.
+3. Repeat with `SPEED 4` (2.7 min) and `SPEED 2` (82 s), reading a new start each time, then a second round of
+   each speed. Write down the six results and the shield's 5 V reading at the ULN2003 while the motor runs.
 
-Watch the pointer pass 0 ten times, then read where it stops. Realign, run at `SPEED 4` (2.7 min), realign, run at
-`SPEED 2` (82 s); then a second round of each speed. Write down the six readings and the shield's 5 V reading at
-the ULN2003 while the motor runs.
-
-| Result | Meaning | Do |
+| Result (end minus start) | Meaning | Do |
 |---|---|---|
-| all six about +0.2° past 0 | 63.68:1 gearbox, the provisional constant is right | nothing |
-| all six about 17.6° short of 0 | 64:1 gearbox | set `RATIO_X100` to `409_600` in `turntable-core/src/planner.rs`, `cargo run` again |
+| all six about +0.2° | 63.68:1 gearbox, the provisional constant is right | nothing |
+| all six about −17.6° | 64:1 gearbox | set `RATIO_X100` to `409_600` in `turntable-core/src/planner.rs`, `cargo run` again |
 | slow runs agree, faster ones short | lost steps at that speed, not the gearbox | set `DEFAULT_PERIOD_MS` in `turntable-core/src/controller.rs` to the slowest good speed and repeat |
 | readings scattered | pointer slipping on the shaft, sheet moving, or the index count was off | fix the mechanics, repeat |
 
@@ -109,14 +109,18 @@ In the console, pointer on 0, `ZERO`. Then, each reading taken after `DONE`:
 
 ## 5. Closure over ten revolutions
 
-Pointer on 0, then:
+This run needs the helper, so the board resets when it opens the port. Make the reset harmless first: in the
+console, move only in multiples of 8 half-steps (`STEP 8`, `STEP 80`, `STEP 800`), so that the total of every
+`STEP` typed since the console opened is a multiple of 8. The shaft then rests on coil pattern 0, the one a reset
+starts from, and the first move after the reset does not jump. End with a positive move, read the starting angle
+(8 half-steps are 0.7°, so it will not land exactly on 0), leave the console, then:
 
 ```sh
 python3 hardware/measure/lockstep.py /dev/cu.usbserial-A5069RR4 "STOPS 36" --repeat 360 NEXT
 python3 hardware/measure/lockstep.py /dev/cu.usbserial-A5069RR4 --no-boot-wait POS   # optional, resets the board
 ```
 
-Expect the index to pass ten times and the pointer back on 0° ± 0.5° (the last `DONE` reads `40758`, the planner's
+Expect the index to pass ten times and the pointer back on its starting angle ± 0.5° (the last `DONE` reads `40758`, the planner's
 ten-turn total; the board forgets it on the next reset, so read the pointer first).
 
 ## 6. Serial robustness and timing under traffic

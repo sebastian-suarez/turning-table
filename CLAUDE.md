@@ -78,6 +78,9 @@ There is no `cargo test` for the firmware (`[[bin]] test = false`; no test harne
 ## Version pins (change deliberately, together)
 
 - `nightly-2025-04-27` is the nightly avr-hal itself pins; other nightlies have hit LLVM AVR regressions.
+  `.vscode/settings.json` names it twice: rust-analyzer runs from that nightly (newer releases crash its
+  proc-macro server), and `RUSTUP_TOOLCHAIN` makes it analyze `turntable-core/` on the same nightly too, because
+  that old rust-analyzer cannot talk to stable's newer proc-macro server.
 - `arduino-hal` is a git dependency pinned by rev (not on crates.io); the rev is the one avr-hal-template uses.
 - `Cargo.lock` pins `encoding_rs = 0.8.35`. It is a *host* build dependency (avr-device → yaml-rust2 →
   encoding_rs); 0.8.42 uses `slice::as_chunks`, unstable on this nightly, and fails with E0658. After any

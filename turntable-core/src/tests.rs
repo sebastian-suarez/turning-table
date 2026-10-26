@@ -4,6 +4,7 @@
 use std::{format, string::String, vec, vec::Vec};
 
 use crate::{
+    accept,
     controller::{ENERGISE_MS, HOLD_MS, POSITION_LIMIT, SETTLE_MS},
     planner::round_half_away,
     sequencer::HALF_STEPS,
@@ -963,11 +964,13 @@ fn loss_between_parse_and_acceptance_cannot_update_motion_or_planner() {
         // section; the ISR can flush during that time too.
         let prepared = command.and_then(|command| console.planner.prepare(command, before));
         console.rx.receive(b'9', false, true);
-        let accepted = console.rx.accept_if_current(generation, || {
-            let prepared = prepared.unwrap();
-            console.controller.apply(prepared).unwrap();
-            console.planner.commit(prepared);
-        });
+        let accepted = accept(
+            &console.rx,
+            || &mut console.controller,
+            &mut console.planner,
+            generation,
+            prepared,
+        );
         assert_eq!(accepted, None);
         assert_eq!(console.controller.snapshot(), before);
         assert_eq!(
@@ -1018,15 +1021,18 @@ impl RxConsole {
             }
             let prepared = parsed
                 .and_then(|command| self.planner.prepare(command, self.controller.snapshot()));
-            // This closure is indivisible on AVR because main holds the RX
-            // mutex from comparison through both controller/planner updates.
-            if let Some(result) = self.rx.accept_if_current(item.generation, || {
-                let prepared = prepared?;
-                self.controller.apply(prepared)?;
-                self.planner.commit(prepared);
-                parsed
-            }) {
-                self.events.push(result);
+            // Firmware's own acceptance transaction. On AVR it is indivisible
+            // because main holds the RX mutex from comparison through both
+            // controller/planner updates; here the test owns every object.
+            if let Some((result, _)) = accept(
+                &self.rx,
+                || &mut self.controller,
+                &mut self.planner,
+                item.generation,
+                prepared,
+            ) {
+                // The accepted command, or the first parse/prepare/apply error.
+                self.events.push(result.and(parsed));
             }
         }
     }

@@ -13,7 +13,7 @@ use avr_device::interrupt::{self, Mutex};
 use core::cell::{Cell, RefCell};
 use panic_halt as _;
 use turntable_core::{
-    Command, Controller, Error, LineAssembler, Planner, PreparedCommand, RxBuffer, State,
+    accept, Command, Controller, Error, LineAssembler, Planner, PreparedCommand, RxBuffer, State,
     RATIO_X100,
 };
 
@@ -153,17 +153,16 @@ fn dispatch<W: ufmt::uWrite>(
         // have completed between the earlier snapshot and this lock. Idle is
         // still available; a pending event must not produce an extra BUSY.
         let previous_done = DONE.borrow(cs).take();
-        let accepted = RX.borrow(cs).borrow().accept_if_current(generation, || {
-            let mut motion = MOTION.borrow(cs).borrow_mut();
-            let result = prepared.and_then(|prepared| {
-                let output = motion.apply(prepared)?;
-                // Commit before restoring interrupts: a loss cannot split the
-                // controller acceptance from its matching planner update.
-                planner.commit(prepared);
-                Ok(output)
-            });
-            (result, motion.snapshot())
-        });
+        // Generation check, controller apply, planner commit and snapshot,
+        // shared with the host tests. MOTION is borrowed only if the
+        // generation still matches; both borrows end inside this section.
+        let accepted = accept(
+            &RX.borrow(cs).borrow(),
+            || MOTION.borrow(cs).borrow_mut(),
+            planner,
+            generation,
+            prepared,
+        );
         (previous_done, accepted)
     });
     if let Some(position) = previous_done {

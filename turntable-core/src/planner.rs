@@ -2,10 +2,16 @@
 
 use crate::{Command, Controller, Error, Snapshot, State};
 
-/// Measured in *hundredths* of a half-step per platter revolution. This is
-/// provisional until the rate-independent hardware calibration. An exact 64:1
-/// gearbox uses 409600 instead. Keeping the fraction avoids repeated-stop drift.
-pub const RATIO_X100: u32 = 407_577;
+/// Measured in *hundredths* of a half-step per platter revolution. Keeping the
+/// fraction avoids repeated-stop drift for gearboxes whose ratio is not whole.
+///
+/// Calibrated on 2026-10-26 (Phase 2 acceptance, section 3): this unit has the
+/// exact 64:1 gearbox, 64 × 64 = 4096 half-steps per revolution. Ten commanded
+/// revolutions at the provisional 407577 (the 63.68395:1 variant, 4075.77) ended
+/// 17° short in five of six runs at 2, 4 and 10 ms per half-step; the 64:1
+/// prediction is 200 half-steps short, 17.58°. A short result that does not
+/// depend on the speed is the gearbox, not lost steps.
+pub const RATIO_X100: u32 = 409_600;
 
 /// All fields have already been range checked by Planner::prepare. Controller
 /// rechecks busy/destination at application so a rejected move cannot mutate k.

@@ -49,15 +49,15 @@ After `turntable-firmware boot`, type commands and press Enter (what you type is
 
 | You type | Board answers | Meaning |
 |---|---|---|
-| `STATUS` | `STATUS Idle 2 407577 36 0` | state, step period in ms, gearbox ratio × 100, stops per revolution, stop counter |
+| `STATUS` | `STATUS Idle 2 409600 36 0` | state, step period in ms, gearbox ratio × 100, stops per revolution, stop counter |
 | `POS` | `POS 0 0` | position in half-steps since `ZERO`, stop counter |
 | `STEP 512` | `OK` … `DONE 512` | motor turns 1/8 of a turn (45°) in about 1.2 s, then releases |
 | `STEP -512` | `OK` … `DONE 0` | back the other way |
-| `ROT 90` | `OK` … `DONE 1019` | a quarter turn |
+| `ROT 90` | `OK` … `DONE 1024` | a quarter turn |
 | `SPEED 4` | `OK` | 4 ms per half-step from the next move on (1..50) |
 | `ZERO` | `OK` | call the current position 0 |
 | `STOPS 36` | `OK` | 36 stops per revolution; `NEXT` moves to the next one |
-| `NEXT` | `OK` … `DONE 113` | first stop of 36 (10°) |
+| `NEXT` | `OK` … `DONE 114` | first stop of 36 (10°) |
 | `ERR BUSY` | | you typed a move while one was running; wait for `DONE` |
 | `ERR LINE` | | a line was lost or corrupted on the wire; retype the command |
 
@@ -120,7 +120,7 @@ python3 hardware/measure/lockstep.py /dev/cu.usbserial-A5069RR4 "STOPS 36" --rep
 python3 hardware/measure/lockstep.py /dev/cu.usbserial-A5069RR4 --no-boot-wait POS   # optional, resets the board
 ```
 
-Expect the index to pass ten times and the pointer back on its starting angle ± 0.5° (the last `DONE` reads `40758`, the planner's
+Expect the index to pass ten times and the pointer back on its starting angle ± 0.5° (the last `DONE` reads `40960`, the planner's
 ten-turn total; the board forgets it on the next reset, so read the pointer first).
 
 ## 6. Serial robustness and timing under traffic
@@ -131,5 +131,5 @@ python3 hardware/measure/lockstep.py /dev/cu.usbserial-A5069RR4 "ROT 3600"      
 python3 hardware/measure/lockstep.py /dev/cu.usbserial-A5069RR4 --spam-status "ROT 3600"     # same with STATUS every 200 ms
 ```
 
-Pass: 200 × `OK`/`DONE`, no `ERR LINE`; both ten-turn moves take 81.5 s ± 0.5 s from `OK` to `DONE` (the script
+Pass: 200 × `OK`/`DONE`, no `ERR LINE`; both ten-turn moves take 81.9 s ± 0.5 s from `OK` to `DONE` (the script
 prints the time). A longer time under STATUS traffic means ticks were lost to masked interrupts.

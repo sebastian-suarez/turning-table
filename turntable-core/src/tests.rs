@@ -463,7 +463,10 @@ fn planner_busy_and_range_rejections_are_transactional() {
 
 #[test]
 fn planner_next_returns_to_the_absolute_grid_after_manual_motion() {
-    let mut planner = planner(RATIO_X100, 3);
+    // Pinned to the 63.68395:1 ratio so the hand-worked numbers below stay valid
+    // whatever RATIO_X100 the hardware calibration sets; the tables above cover
+    // both gearbox variants.
+    let mut planner = planner(407_577, 3);
     let snapshot = Snapshot {
         state: State::Idle,
         position: 0,

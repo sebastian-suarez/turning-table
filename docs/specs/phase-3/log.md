@@ -21,3 +21,11 @@ Verification runs and review rounds, without model names; the models that served
 - 2026-10-26: two attack rounds used, the limit. The user decided to freeze v3 without a third attack, and that
   the hub writes this suite on route `coding.default` (one-off; the `coding.tests` writer was out of credits until
   2026-10-28T00:26Z).
+- 2026-10-26: spec v3 frozen. Acceptance suite `turntable-core/tests/phase3.rs` written from the criteria (P, S, C,
+  D, H, N), and `ARM 10` dropped from the Phase 2 rejected list (P6).
+  - Checks: type-checked and clippy/rustfmt-clean against throwaway `todo!()` stubs of the spec's interface
+    (scratch only, not committed). `cargo test --lib` passes, 37 Phase 2 tests.
+  - Baseline `cargo test --manifest-path turntable-core/Cargo.toml` exits 101, as it should: the interface does not
+    exist yet. `spec.sh ready` protects `tests/phase3.rs` and `src/tests.rs`.
+  - Brief note for the implementer: implementing `Iterator for Scan` satisfies the spec's `Scan::next` and clippy's
+    `should_implement_trait`; the suite calls `next` in a form that works either way.

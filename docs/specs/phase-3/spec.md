@@ -1,7 +1,7 @@
 # Spec: phase-3
 
 Version: 3
-Status: frozen
+Status: suite-ready
 
 ## Problem
 

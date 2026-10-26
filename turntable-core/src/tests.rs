@@ -154,7 +154,6 @@ fn parser_rejects_unknown_missing_extra_and_non_numeric_arguments() {
         b"",
         b" \t",
         b"HELP",
-        b"ARM 10",
         b"STEPS 1",
         b"STEP",
         b"ROT",

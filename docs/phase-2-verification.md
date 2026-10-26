@@ -208,3 +208,12 @@ regressions above.
   acceptance step into `turntable-core` and call it from both `dispatch` and the tests to remove drift risk.
 - Phase 2 leaves 58 B under its 8 KiB guideline; the arm's second controller instance needs the Phase 3 budget
   (16 KiB proposed, hardware limit 30720 B).
+
+## Hardware acceptance log
+
+Readings from the walkthrough in `docs/phase-2-acceptance.md`, in the order they were taken.
+
+| Date | Section | Result |
+|---|---|---|
+| 2026-10-26 | 0, setup | Printed disc, pointer and coupon fit the motor at the default `flat_fit = 3.0`; Nano on the breadboard with IN1..IN4 on D2..D5, driver and motor powered from the 18650 shield's 5 V (HOLD), common ground on the blue rail |
+| 2026-10-26 | 1, flash and console | `cargo run` flashed the Phase 2 firmware; `STATUS` answered; `STEP 512` and `STEP -512` moved the shaft out and back. Positive steps turn the shaft **clockwise** seen from the shaft side, the same direction in which the disc's numbers increase |

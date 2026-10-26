@@ -1,6 +1,6 @@
 # Spec: phase-3
 
-Version: 2
+Version: 3
 Status: attacked
 
 ## Problem
@@ -56,6 +56,8 @@ boards take their `+` from the shield's 5 V with ground common to the Nano.
 | `ARM_MAX_TENTHS` | 650 | highest arm elevation, 65.0° (the plan's 5°..65° travel) |
 | `MAX_RINGS` | 4 | at most four ring heights |
 | `MAX_PHOTOS` | 300 | RealityScan's photo limit per scan (`docs/PLAN.md`, D3) |
+| `CLOCK_MARGIN_PERCENT` | 1 | the photo estimate assumes a board clock up to 1 % slow (measured: 0.70 %) |
+| `START_ALLOWANCE_MS` | 10000 | the photo estimate allows the phone to start shooting 10 s before the table |
 | `MOVE_OVERHEAD_TICKS` | 171 | 1 start tick + 20 energise + 50 hold + 100 settle, from the Phase 2 lifecycle |
 | `HOME_PERIOD_MS` | 4 | arm speed while homing, ms per half-step |
 | `HOME_TRAVEL_TENTHS` | 800 | longest homing search, 80.0° of arm travel |
@@ -104,10 +106,18 @@ Two slots of 24 bytes, slot 0 at EEPROM address 0 and slot 1 at address 32, each
 - Loading: if both slots are valid, the one whose generation is one ahead of the other's (modulo 256) is current;
   if the generations are equal or differ by anything else, slot 0. If one slot is valid, it is current. If none is,
   the built-in defaults apply, with no current slot. Nothing is written at boot.
-- Saving writes the whole record to the slot that is not current (slot 0 when there is none), with generation =
-  current generation + 1 (or 1). Bytes go in address order, and the generation byte, offset 23, goes last. So a
-  power cut during a save leaves the old settings current: the half-written slot still carries the older
-  generation, or a CRC that fails. The new settings become current only with the last byte.
+- Saving writes the new record to the slot that is not current (slot 0 when there is none), with generation =
+  current generation + 1 (or 1), in this order:
+  1. if the destination's magic byte reads `0x54`, it is set to `0x00` first;
+  2. offsets 1..23 in address order (a byte that already holds its value may be skipped);
+  3. the magic byte `0x54`, last.
+- Every byte is read back after its write. The first mismatch stops the save with `ERR SAVE`, and nothing after
+  it is written.
+- A power cut at any point therefore leaves the old settings current. The destination's magic is not `0x54` from
+  step 1 until step 3 completes. The step 1 write only ever turns an older valid record (one generation behind)
+  into an invalid one. The new settings become current with the last byte.
+- A record whose payload was complete but whose magic write was cut is never revived: the next save sees a magic
+  other than `0x54`, skips step 1 and overwrites it. This holds across any number of interrupted saves.
 
 ### Console protocol additions
 
@@ -191,21 +201,24 @@ saved scan. In both cases:
 4. `END <turns completed>` when the last turn is `Idle`. On `STOP`, every motor halts at once and
    `END <turns completed>` is printed once both are `Idle` (a halted turn does not count).
 
-The photo estimate assumes the phone shoots every `interval` ms for the whole scan:
-`floor(T / interval) + 1`. `T` is in ticks:
+The photo estimate assumes the phone shoots every `interval` ms for the whole scan, starts up to
+`START_ALLOWANCE_MS` before the table, and that the board's ticks may last up to `CLOCK_MARGIN_PERCENT` longer
+than a millisecond:
+`floor((floor(T × (100 + CLOCK_MARGIN_PERCENT) / 100) + START_ALLOWANCE_MS) / interval) + 1`. `T` is in ticks:
 - one `MOVE_OVERHEAD_TICKS + |Δ| × speed` per arm move;
 - plus `rings × MOVE_OVERHEAD_TICKS`;
 - plus `round_half_away(rings × pratio_x100 / 100) × p`.
 
-The board's clock makes real times 0.7 % longer; the estimate ignores that.
-
 Worked example (defaults, `SPEED 2`, arm homed at 455, `SCAN 3 36 3000`):
 - `p = round(108000 × 100 / 409600) = 26` ms, so a turn takes 106.5 s by the board's ticks.
 - The moves are arm +455, turn, arm +2276, turn, arm +2275, turn.
-- `T = 330526` ticks, so the estimate is 111 photos.
-- `SCAN 1 36 3000` from home: arm +455, turn, estimate 36.
-- With `RINGS 5 65 5 65`, `SCAN 4 72 3008` is accepted (`p = 53`, estimate 300) and `SCAN 4 72 3007` is
-  `ERR RANGE` (estimate 301).
+- `T = 330526` ticks, so the estimate is 115 photos (the phone really takes about 111 when started with the
+  table).
+- `SCAN 1 36 3000` from home: arm +455, turn, estimate 40.
+- `SCAN 3 96 3000` is accepted (`p = 70`, estimate 297; about 296 real photos with the phone 10 s early) and
+  `SCAN 3 97 3000` is `ERR RANGE` (`p = 71`, estimate 301).
+- With `RINGS 5 65 5 65`, `SCAN 4 70 3000` is accepted (estimate 297) and `SCAN 4 71 3000` is `ERR RANGE`
+  (estimate 302).
 - `SCAN 1 1 100` (`p = 0`) and `SCAN 1 300 60000` (`p = 4395`) are `ERR RANGE`.
 
 Procedure this serves: set RealityScan's interval timer to `interval` (or use auto-capture), start it, start the
@@ -238,6 +251,9 @@ change these without a spec change.
     `Settings::decode(&[u8; 24]) -> Option<(Settings, u8)>` (settings and generation).
   - `load(slot0: &[u8; 24], slot1: &[u8; 24]) -> Option<Loaded>` with
     `Loaded { settings: Settings, slot: u8, generation: u8 }`.
+  - `save_plan(slot0: &[u8; 24], slot1: &[u8; 24], settings: &Settings) -> SavePlan`, where `SavePlan` is an
+    `Iterator<Item = (u16, u8)>` of EEPROM address and byte, in the order of the saving rule (at most 25 writes).
+    The firmware executes it with read-back; the host suite simulates power cuts with it.
 - **Controller.** `Controller::halt(&mut self)` and
   `Controller::start_with_period(&mut self, steps: i32, period_ms: u8) -> Result<Output, Error>`.
 - **Inputs.** `Debouncer::new(ticks: u8)`, `Debouncer::sample(&mut self, closed: bool) -> bool` (true on the sample
@@ -304,13 +320,21 @@ change these without a spec change.
   - equal generations;
   - one slot valid (either side);
   - none valid → `None`.
-- S7 Torn save, starting from slot 0 current with settings A at generation g, and slot 1 holding an older valid
-  record or blank `0xFF`:
-  - write settings B's encoding with generation g + 1 into slot 1 in the specified order, stopping after each
-    of the 24 byte writes;
-  - in addition, set the byte being written to an arbitrary value (`0x00`, `0xFF`, the old value XOR `0x5A`);
-  - `load` returns exactly A at every stop before the last byte completes, and exactly B after it.
-  - The same holds with the roles of the slots swapped, and for g = 255.
+- S7 `save_plan` follows the saving rule:
+  - the destination is the slot that is not current;
+  - the first write sets the magic byte to `0x00` when it reads `0x54`, and is absent otherwise;
+  - the last write sets the magic byte to `0x54`;
+  - applying every write makes `load` return the new settings at generation + 1.
+- S8 Interrupted saves. Start states:
+  - both slots valid at adjacent generations, including (255, 0) and (0, 255);
+  - a blank EEPROM (all `0xFF`).
+
+  Run up to three consecutive saves of different settings, each made with `save_plan` on the slots as left by the
+  previous one. Each save is cut after any number of its writes, and the write being cut leaves `0x00`, `0xFF`,
+  its intended value, its intended value XOR `0x5A`, or `0x54`. After every cut, `load` returns exactly what it
+  returned before that save began, unless every write of the save completed except, at most, the last one, and
+  that last one left `0x54`: then it returns the new settings. On a blank start, "before" is `None`.
+  Every combination of start state, cut position and torn value is checked.
 
 ### C: controller (host, production sequencer, simulated 1 kHz tick)
 
@@ -353,16 +377,17 @@ change these without a spec change.
 ### N: scan sequence (host)
 
 - N1 The worked example: `Scan::new(&DEFAULT, {3, 36, 3000}, 2, 455)` yields `Arm(455), Turn, Arm(2276), Turn,
-  Arm(2275), Turn`, then `None`; `turn_period_ms` 26; `photos` 111. `{1, 36, 3000}` yields `Arm(455), Turn`
-  with `photos` 36.
+  Arm(2275), Turn`, then `None`; `turn_period_ms` 26; `photos` 115. `{1, 36, 3000}` yields `Arm(455), Turn`
+  with `photos` 40.
 - N2 `turn_period_ms` equals `round_half_away(photos × interval × 100, pratio_x100)` across ratios, photo counts and
   intervals. The result 0 and results above 255 → `Err(Range)` (`{1, 1, 100}`, `{1, 300, 60000}`).
 - N3 Arm moves:
   - none when the arm is already at the ring's position, or for two equal consecutive heights;
   - a descending list gives negative arm moves;
   - each arm move equals the target position minus the previous position exactly.
-- N4 Photo estimate per the formula. With `RINGS 5 65 5 65`, `{4, 72, 3008}` is accepted with `photos` 300 and
-  `{4, 72, 3007}` → `Err(Range)`.
+- N4 Photo estimate per the formula, across speeds, ratios and arm start positions.
+  - With the defaults, `{3, 96, 3000}` is accepted with `photos` 297 and `{3, 97, 3000}` → `Err(Range)`.
+  - With `RINGS 5 65 5 65`, `{4, 70, 3000}` is accepted with `photos` 297 and `{4, 71, 3000}` → `Err(Range)`.
 - N5 `Err(Range)` when rings exceed the ring count, and when one of the first `rings` heights is below the home
   angle or above 65°.
 
@@ -405,7 +430,7 @@ change these without a spec change.
 - W9 Exit: phone on its holder with RealityScan's interval timer at 3 s (or auto-capture). Run `SCAN 1 36 3000`
   and leave the table alone. The scan runs unattended to `END 1`, the photos are sharp, and RealityScan builds a
   model from them.
-- W10 The full default scan (`SCAN 3 36 3000`, about 111 photos) also builds a model.
+- W10 The full default scan (`SCAN 3 36 3000`, estimate 115, about 111 real photos) also builds a model.
 
 ## Decisions
 
@@ -422,8 +447,12 @@ change these without a spec change.
   - while anything moves, it stops;
   - when idle, it homes if needed and otherwise starts the saved scan.
 - 2026-10-26: calibration values are built-in defaults that console commands override and the board keeps in
-  EEPROM, in two copies with a generation byte written last, so a power cut leaves the old or the new settings.
-- 2026-10-26: `SCAN` refuses a scan whose photo estimate exceeds 300 (RealityScan's limit).
+  EEPROM, in two copies with a generation counter.
+- 2026-10-26 (attack round 2): a save clears the destination's magic byte first (only when it is valid) and writes
+  it last, so any number of interrupted saves in a row leaves the old or the new settings. Checked by simulation
+  over every cut position and torn value for up to three consecutive saves.
+- 2026-10-26: `SCAN` refuses a scan whose photo estimate exceeds 300 (RealityScan's limit). After attack round 2,
+  the estimate assumes a clock up to 1 % slow and the phone starting 10 s before the table.
 - 2026-10-26: ring heights are a saved list (`RINGS`), and `SCAN <rings> ...` uses the first `<rings>` of them.
 - 2026-10-26: configuring through the LCD1602 (which has an I2C backpack) is the next phase, built on these same
   settings; A4/A5 stay free for it.

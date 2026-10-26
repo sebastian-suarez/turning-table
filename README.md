@@ -35,10 +35,10 @@ Phases, decisions and progress live in [`docs/PLAN.md`](docs/PLAN.md).
 
 ## Status
 
-Research, board bring-up and a capture trial with RealityScan are done. The Phase 2 stepper drive is implemented
-and verified on the host against [`docs/phase-2-spec.md`](docs/phase-2-spec.md); its hardware acceptance
-([`docs/phase-2-acceptance.md`](docs/phase-2-acceptance.md)) is next. Scan mode, the mechanical design, the scan
-procedure and hardening follow; see the plan.
+Research, board bring-up, a capture trial with RealityScan and the Phase 2 stepper drive are done: the drive
+passed its hardware acceptance on 2026-10-26 ([`docs/phase-2-acceptance.md`](docs/phase-2-acceptance.md), results
+in [`docs/phase-2-verification.md`](docs/phase-2-verification.md)). Scan mode is next, then the mechanical design,
+the scan procedure and hardening; see the plan.
 
 ## Build and flash
 

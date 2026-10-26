@@ -37,7 +37,7 @@ Legend: [x] done, [~] in progress, [ ] todo. Written 2026-10-22; decisions recor
 1b. **Capture trial** [x] 2026-10-22. Phone on a tripod, RealityScan Object Mode with the Capture Interval Timer,
    object turned by hand: the user reports a recognisable model. The interval-timer flow is the design basis for
    Phase 3.
-2. **Stepper drive** [ ]. ULN2003 IN1..IN4 on D2..D5, motor powered from the shield's 5 V output (D4, common
+2. **Stepper drive** [x] 2026-10-26. ULN2003 IN1..IN4 on D2..D5, motor powered from the shield's 5 V output (D4, common
    ground). Half-step
    sequencer (8-step table) on a TC2 CTC interrupt, non-blocking, coils released after each move; integer error
    accumulation so N stops add up to exactly one revolution. Commands `STEP <n>`, `ROT <deg>`. First measurement:
@@ -47,7 +47,9 @@ Legend: [x] done, [~] in progress, [ ] todo. Written 2026-10-22; decisions recor
    shaft with a 150 mm pointer (or a phone photo of a rim marker with the pixels-per-degree stated): a commanded
    90° and 10°, always approached from the same direction to hide gearbox backlash, land within ±0.5° (about 6
    half-steps; one half-step is 0.088°, invisible on paper); 10 commanded revolutions produce exactly 10 observed
-   passes of the index mark and return to start within ±0.5°.
+   passes of the index mark and return to start within ±0.5°. Result (`docs/phase-2-verification.md`, hardware
+   acceptance log): all sections pass; the platter motor is the 64:1 gearbox, now the firmware constant; ten turns
+   in 360 stops return within 0.5°; no timer ticks lost under serial traffic; the board's clock runs 0.70 % slow.
 3. **Scan mode, standalone** [ ]. Second axis first: the arm stepper on D6, D7, D8, D10 as a second controller
    instance with `ARM <deg>` (through the 8:1 reduction) and its own calibration. Then `SCAN <rings> <stops>
    <pause_ms>` runs K ring angles × N platter stops with a pause matched to RealityScan's interval timer (or a
@@ -55,7 +57,9 @@ Legend: [x] done, [~] in progress, [ ] todo. Written 2026-10-22; decisions recor
    the UI. `turntable-core/` holds the command parser and motion math with host
    `cargo test`. A `host/` CLI is optional later (not needed for the RealityScan flow). Host rule from the Phase 2
    review: `ERR LINE` means resend the last unacknowledged command, and so does a reply timeout right after an
-   unsolicited `ERR LINE`. Flash budget for Phase 3: 16 KiB (Phase 2 used 8134 B of its 8 KiB guideline; the
+   unsolicited `ERR LINE`. Two measurements from the Phase 2 acceptance feed in: the board's clock runs 0.70 %
+   slow, so scan pauses need a calibrated clock correction (or a margin) to stay in step with the phone's interval
+   timer; and the arm motor gets its own gearbox calibration, since 28BYJ-48 units come in two ratios. Flash budget for Phase 3: 16 KiB (Phase 2 used 8134 B of its 8 KiB guideline; the
    hardware limit is 30720 B). Exit: a 36-stop scan runs unattended from one command.
 4. **Mechanical, custom** [ ]. Printer: Creality Hi, 260 × 260 × 300 mm. Parametric CAD in `hardware/cad/`
    (OpenSCAD, STL exported from the command line). Inputs (2026-10-22): the kit has exactly one 28BYJ-48 + ULN2003

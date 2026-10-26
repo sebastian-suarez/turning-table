@@ -131,5 +131,8 @@ python3 hardware/measure/lockstep.py /dev/cu.usbserial-A5069RR4 "ROT 3600"      
 python3 hardware/measure/lockstep.py /dev/cu.usbserial-A5069RR4 --spam-status "ROT 3600"     # same with STATUS every 200 ms
 ```
 
-Pass: 200 × `OK`/`DONE`, no `ERR LINE`; both ten-turn moves take 81.9 s ± 0.5 s from `OK` to `DONE` (the script
-prints the time). A longer time under STATUS traffic means ticks were lost to masked interrupts.
+Pass: 200 × `OK`/`DONE`, no `ERR LINE`; the two ten-turn moves take the same time from `OK` to `DONE` within
+0.1 s (the script prints the time). A longer time under STATUS traffic means ticks were lost to masked interrupts.
+The absolute time is not a pass criterion: at an exact 16 MHz clock it is 82.09 s (40960 half-steps × 2 ms plus
+the 20 ms energise, 50 ms hold and 100 ms settle), and any difference measures the board's clock error. Write that
+error down; Phase 3 corrects the scan timing with it. This board: 82.66 s, a clock 0.70 % slow.

@@ -108,7 +108,10 @@ There is no `cargo test` for the firmware (`[[bin]] test = false`; no test harne
   stepped from one TC2 CTC interrupt (1 ms tick, step period in ticks), coils released when idle. Half-steps per revolution is one
   named constant, measured in Phase 2, not assumed: 28BYJ-48 units ship with either a 63.68395:1 gearbox
   (4075.77 half-steps) or an exact 64:1 one (4096); the wrong constant drifts 1.78° per revolution. Accumulate
-  the fractional remainder in integers across stops so N stops close exactly. Motor and servo power from the
+  the fractional remainder in integers across stops so N stops close exactly. Measured 2026-10-26: the platter
+  motor is 64:1 (`RATIO_X100 = 409_600`); the arm motor is not yet measured. This board's clock runs 0.70 % slow
+  (ceramic resonator, about 15.89 MHz): step counts are exact, durations are not, so anything timed against the
+  phone needs the correction. Motor and servo power from the
   18650 power-bank shield's 5 V output (`hardware/BOM.md` item 2; slide switch on HOLD) with common ground, never
   the Nano's 5 V pin, not even for a test.
 - The console protocol is line-based ASCII, one command per `\n`, so it can be typed into the `cargo run` console.

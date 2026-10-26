@@ -1,4 +1,4 @@
-# Phase 2 spec: stepper drive (v3.3, after two plan attacks and two implementation review rounds, 2026-10-22)
+# Phase 2 spec: stepper drive (v3.4, after two plan attacks and two implementation review rounds, 2026-10-22; acceptance amended 2026-10-26)
 
 Acceptance suite first; an implementation must pass it on the host before it is flashed. v1 → v2 (Sol attack):
 cumulative closure targets, buffered RX with corruption rejection, one-move-in-flight policy, numeric bounds, a
@@ -143,9 +143,12 @@ Motor and ULN2003 `+` from an external 5 V supply, GND common with the Nano.
    lines get `ERR LINE`. A free-running stream is expected to overflow the 32-byte ring while the firmware prints a
    reply (a 42-byte `STATUS` reply blocks for 7 ms = 42 inbound bytes) and to produce `ERR LINE` bursts by design;
    the Phase 3 host therefore runs lockstep.
-5. Timing under traffic: `ROT 3600` at `SPEED 2` must take 40758 × 2 ms = 81.5 s ± 0.5 s from `OK` to `DONE`,
-   measured with a stopwatch, once idle and once while `STATUS` is sent every 200 ms from the Mac. A longer time
-   means ticks were lost to masked interrupts.
+5. Timing under traffic: `ROT 3600` at `SPEED 2`, timed from `OK` to `DONE` once idle and once while `STATUS` is
+   sent every 200 ms from the Mac. Pass: the two times agree within 0.1 s; a longer time under traffic means ticks
+   were lost to masked interrupts. The absolute time is not a criterion (amended 2026-10-26 by the maintainer's
+   decision): it is (21 + 2 × steps + 50 + 100) ticks, 82.091 s for the 64:1 gearbox at an exact 16 MHz clock,
+   scaled by the board's clock error, which this test measures. This board measured 82.66 s both times, a clock
+   0.70 % slow (about 15.89 MHz); Phase 3 corrects scan timing for it.
 
 ## Delivery
 

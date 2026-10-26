@@ -5,12 +5,12 @@ SCAD_ARGS ?=
 
 SOURCE := protractor.scad
 OUT := ../measure
-STLS := $(OUT)/protractor-disc.stl $(OUT)/pointer.stl $(OUT)/fit-coupon.stl
+STLS := $(OUT)/protractor-disc.stl $(OUT)/pointer.stl $(OUT)/fit-coupon.stl $(OUT)/screws.stl
 PNGS := $(OUT)/protractor-disc.png $(OUT)/pointer.png $(OUT)/pointer-tip.png
 STL_FLAGS := --backend=manifold --export-format binstl --hardwarnings
 PNG_FLAGS := --backend=manifold --hardwarnings --projection=o
 
-.PHONY: all check check-recessed preview clean
+.PHONY: all check check-recessed check-screw-fit preview clean
 .DELETE_ON_ERROR:
 
 all: $(STLS)
@@ -24,6 +24,9 @@ $(OUT)/protractor-disc.stl: $(SOURCE) Makefile | $(OUT)
 $(OUT)/pointer.stl: $(SOURCE) Makefile | $(OUT)
 	$(OPENSCAD) $(STL_FLAGS) $(SCAD_ARGS) -D 'part="pointer"' -o "$@" "$(SOURCE)"
 
+$(OUT)/screws.stl: $(SOURCE) Makefile | $(OUT)
+	$(OPENSCAD) $(STL_FLAGS) $(SCAD_ARGS) -D 'part="screws"' -o "$@" "$(SOURCE)"
+
 $(OUT)/fit-coupon.stl: $(SOURCE) Makefile | $(OUT)
 	$(OPENSCAD) $(STL_FLAGS) $(SCAD_ARGS) -D 'part="coupon"' -o "$@" "$(SOURCE)"
 
@@ -33,6 +36,8 @@ check: all
 	@$(PYTHON) stl_bounds.py --expect-size 190 190 2.8 --expect-min -95 -95 0 $(OUT)/protractor-disc.stl
 	@$(PYTHON) stl_bounds.py --expect-size 100 14 5.9 --expect-min -7 -7 0 $(OUT)/pointer.stl
 	@$(PYTHON) stl_bounds.py --max-size 70 34 8.3 --expect-min -35 -13.3 0 $(OUT)/fit-coupon.stl
+	@$(PYTHON) stl_bounds.py --max-size 64 9 11.4 $(OUT)/screws.stl
+	@$(MAKE) --no-print-directory check-screw-fit
 
 # Recessed ticks need their matching, taller hub and coupon. Export all three in isolation;
 # a style check must never replace the raised STLs waiting to go to the slicer.
@@ -68,3 +73,17 @@ $(OUT)/pointer-tip.png: $(SOURCE) Makefile | $(OUT)
 
 clean:
 	rm -f $(STLS) $(PNGS)
+
+# The printed bolt and nut must mate: the snug nut screwed on at a whole number
+# of pitches must not intersect the bolt, while the same nut pushed a quarter
+# pitch without turning must (otherwise the thread would not hold).
+check-screw-fit:
+	@set -eu; \
+	scratch=$$(mktemp -d "$${TMPDIR:-/tmp}/protractor-screws.XXXXXX"); \
+	trap 'rm -rf "$$scratch"' 0; \
+	trap 'exit 1' 1 2 15; \
+	$(OPENSCAD) $(STL_FLAGS) $(SCAD_ARGS) -D 'part="screw_fit_test"' -o "$$scratch/fit.stl" "$(SOURCE)" > "$$scratch/fit.log" 2>&1 || true; \
+	grep -q "top level object is empty" "$$scratch/fit.log" || { echo "screw fit: bolt and nut interfere"; exit 1; }; \
+	$(OPENSCAD) $(STL_FLAGS) $(SCAD_ARGS) -D 'part="screw_fit_test"' -D 'fit_test_offset=4.875' -o "$$scratch/lock.stl" "$(SOURCE)" > "$$scratch/lock.log" 2>&1; \
+	! grep -q "top level object is empty" "$$scratch/lock.log" || { echo "screw fit: nut slides without turning"; exit 1; }; \
+	echo "screw fit: bolt and nut mate without interference and lock axially"

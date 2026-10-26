@@ -4,7 +4,7 @@
 // The default is a GUI layout: three separate parts, each resting on its print face.
 
 /* [Selection] */
-part = "all";                    // [all, disc, pointer, coupon]
+part = "all";                    // [all, disc, pointer, coupon, screws, screw_fit_test]
 tick_style = "raised";           // [raised, recessed]
 assembled_view = false;          // Only for the pointer side PNGs; leave false for STL.
 
@@ -120,6 +120,38 @@ dot_arc_end = 150;
 label_pad_inner_r = 4.3;
 label_pad_outer_r = 6.1;
 
+/* [Substitute screws: printed bolt and nut for the two ear holes, until real M4 screws arrive] */
+// These replace the M4 button-head screws. They do not have to be metric,
+// because the bolt and its nut are printed together: what matters is that the
+// bolt passes the motor's Ø4.2 steel ear hole, that its head stays inside the
+// 3 mm keep-out under the pointer arm, and that the nut fits beside the can.
+screw_major_d = 3.9;            // Outer thread diameter: passes the Ø4.2 ear and Ø4.6 disc holes.
+screw_pitch = 1.5;              // Coarse on purpose: a 0.2 mm layer gives 7.5 layers per turn.
+screw_thread_e = 0.3;           // Thread depth is twice this; see helix() for the eccentric profile.
+screw_profile_r = screw_major_d / 2 - screw_thread_e;
+screw_head_d = 9.0;
+screw_head_h = 2.4;             // Inside max_head_h (3 mm): the arm passes 1.6 mm above it.
+screw_length = 9.0;             // Disc 2.4 + ear (about 1) + nut 4 + spare; ears up to 2.6 mm fit.
+screw_tip_chamfer = 0.6;        // A lead-in so the first turn finds the nut's thread.
+screw_grip_notches = 18;        // Finger grip on the head rim; no screwdriver needed.
+screw_grip_notch_d = 1.0;
+nut_h = 4.0;
+nut_d = 9.0;
+nut_clearances = [0.2, 0.2, 0.35, 0.35]; // Two snug nuts, two looser spares (marked with a rim notch).
+nut_entry_chamfer = 0.4;
+motor_can_d = 28.0;             // The can is centred on the ear line, 8 mm off the shaft.
+nut_can_gap = 0.3;
+// Each ear hole is ear_pitch / 2 = 17.5 mm from the can's centre and the can's
+// radius is 14, so only 3.5 mm separate the hole's centre from the can wall.
+// A round Ø9 nut would hit the can. The flat side, turned toward the can, both
+// clears it and stops the nut from spinning: you only turn the bolt's head.
+nut_flat_offset = ear_pitch / 2 - motor_can_d / 2 - nut_can_gap; // 3.2 mm.
+nut_min_wall = 0.8;             // Two extrusion lines between the thread and the flat.
+nut_mark_d = 1.2;
+thread_slice_h = 0.05;          // Extrusion slices: 30 per pitch keeps the helix smooth.
+thread_fn = 48;
+screw_layout_pitch = 11.0;      // Six separate parts on one plate, 2 mm apart.
+
 /* [Numerical quality, print layout and preview colours] */
 $fa = 0.5;                     // At r = 95, chord error is under 0.001 mm, below the 0.01 budget.
 $fs = 0.3;
@@ -162,8 +194,9 @@ coupon_top_z = coupon_h + hub_h;
 // proud of that pad but stay inside the 8.3 mm raised / 8.7 mm recessed height.
 label_pad_z = coupon_top_z - dot_h;
 
-assert(part == "all" || part == "disc" || part == "pointer" || part == "coupon",
-       "part must be all, disc, pointer or coupon");
+assert(part == "all" || part == "disc" || part == "pointer" || part == "coupon" ||
+       part == "screws" || part == "screw_fit_test",
+       "part must be all, disc, pointer, coupon, screws or screw_fit_test");
 assert(tick_style == "raised" || tick_style == "recessed",
        "tick_style must be raised or recessed");
 assert(flat_fit > 0 && flat_fit < round_bore_d, "flat_fit must leave two flats");
@@ -404,14 +437,128 @@ module coupon() {
         }
 }
 
+// ---------------------------------------------------------------------------
+// Substitute screws.
+//
+// The thread is an "eccentric circle" helix: a circle of radius r, moved off the
+// axis by screw_thread_e, extruded upward while it rotates one full turn per
+// pitch. Every horizontal slice is a plain circle, which FDM prints well, and the
+// slices stack into a single-start, rounded thread of depth 2 * e. A nut cut with
+// the same helix but a slightly larger circle mates with it: at any height the
+// bolt's circle sits inside the nut's circle with `c` of gap all round.
+//
+// The phase of the helix depends only on the absolute z, so any part built with
+// helix() at any height belongs to the same screw. The bolt cannot be pulled out
+// of the nut axially: shifting it by dz without turning rotates its circle by
+// 360 * dz / pitch against the nut's, and the two circles stop overlapping once
+// 2 * e * sin(angle / 2) exceeds c, which is why each clearance must stay below
+// 2 * e.
+//
+// OpenSCAD's twist follows the left-hand rule, so a NEGATIVE twist makes the
+// usual right-hand thread: turn clockwise, seen from the head, to tighten.
+function thread_phase(z) = 360 * z / screw_pitch;
+
+module helix(r, z0, h) {
+    translate([0, 0, z0])
+        rotate(thread_phase(z0))
+            linear_extrude(height = h, twist = -360 * h / screw_pitch,
+                           slices = ceil(h / thread_slice_h))
+                translate([screw_thread_e, 0])
+                    circle(r = r, $fn = thread_fn);
+}
+
+// Print coordinates: head on the bed (its underside is the face that bears on
+// the disc), thread standing up. Upright is the only orientation that prints
+// the thread's flanks as layers rather than as a fragile overhang.
+module screw_bolt() {
+    thread_top_z = screw_head_h + screw_length;
+    difference() {
+        cylinder(d = screw_head_d, h = screw_head_h);
+        for (i = [0 : screw_grip_notches - 1])
+            rotate(i * 360 / screw_grip_notches)
+                translate([screw_head_d / 2, 0, -boolean_overlap])
+                    cylinder(d = screw_grip_notch_d, h = screw_head_h + 2 * boolean_overlap,
+                             $fn = 12);
+    }
+    intersection() {
+        helix(screw_profile_r, screw_head_h - boolean_overlap, screw_length + boolean_overlap);
+        // Tip chamfer: a cone that narrows the last 0.6 mm by 0.6 mm in radius.
+        union() {
+            cylinder(d = screw_major_d + 1, h = thread_top_z - screw_tip_chamfer);
+            translate([0, 0, thread_top_z - screw_tip_chamfer])
+                cylinder(d1 = screw_major_d + 1, d2 = screw_major_d + 1 - 2 * (screw_tip_chamfer + 0.5),
+                         h = screw_tip_chamfer);
+        }
+    }
+}
+
+// The flat is on the nut's -x side. In use, turn that flat toward the motor can.
+module screw_nut(c) {
+    hole_r = screw_profile_r + c + screw_thread_e; // Outer envelope of the threaded hole.
+    difference() {
+        intersection() {
+            cylinder(d = nut_d, h = nut_h);
+            translate([-nut_flat_offset, -nut_d / 2, -boolean_overlap])
+                cube([nut_d, nut_d, nut_h + 2 * boolean_overlap]);
+        }
+        helix(screw_profile_r + c, -boolean_overlap, nut_h + 2 * boolean_overlap);
+        // Entry chamfers on both faces, so either face can go on first.
+        for (z = [0, nut_h])
+            translate([0, 0, z])
+                mirror([0, 0, z == 0 ? 0 : 1])
+                    translate([0, 0, -boolean_overlap])
+                        cylinder(r1 = hole_r + nut_entry_chamfer, r2 = hole_r - 0.1,
+                                 h = nut_entry_chamfer + 0.1 + boolean_overlap);
+        // The looser spares carry a notch on the rim opposite the flat.
+        if (c > nut_clearances[0])
+            translate([nut_d / 2, 0, -boolean_overlap])
+                cylinder(d = nut_mark_d, h = nut_h + 2 * boolean_overlap, $fn = 12);
+    }
+}
+
+module screws() {
+    assert(screw_head_h <= max_head_h, "Screw head taller than the keep-out under the pointer arm");
+    assert(screw_major_d < ear_hole_nominal_d && screw_major_d < mount_hole_d,
+           "Bolt must pass the ear and disc holes");
+    for (c = nut_clearances) {
+        assert(c > 0 && c < 2 * screw_thread_e, "Each nut clearance must stay below the thread depth");
+        assert(nut_flat_offset - (screw_profile_r + c + screw_thread_e) >= nut_min_wall,
+               "Nut wall at the flat is too thin");
+    }
+    echo(screw_head_top_above_disc_mm = screw_head_h,
+         arm_clearance_above_screw_head_mm = arm_bottom_z - disc_h - screw_head_h,
+         nut_flat_to_can_mm = nut_can_gap,
+         nut_wall_at_flat_mm = nut_flat_offset - (screw_profile_r + nut_clearances[0] + screw_thread_e));
+    for (i = [0 : 1])
+        translate([i * screw_layout_pitch, 0, 0]) screw_bolt();
+    for (i = [0 : len(nut_clearances) - 1])
+        translate([(i + 2) * screw_layout_pitch, 0, 0]) screw_nut(nut_clearances[i]);
+}
+
+// Verification only, never printed: the snug nut screwed onto the bolt at a
+// height that is a whole number of pitches, where both helices have the same
+// phase. Rendering the intersection must produce nothing (no interference);
+// fit_test_c below zero, or an offset that is not a whole pitch, must not.
+fit_test_c = nut_clearances[0];
+fit_test_offset = 3 * screw_pitch;
+module screw_fit_test() {
+    intersection() {
+        screw_bolt();
+        translate([0, 0, fit_test_offset]) screw_nut(fit_test_c);
+    }
+}
+
 if (part == "disc") disc();
 else if (part == "pointer") {
     if (assembled_view)
         translate([0, 0, hub_top_z]) mirror([0, 0, 1]) pointer();
     else pointer();
 } else if (part == "coupon") coupon();
+else if (part == "screws") screws();
+else if (part == "screw_fit_test") screw_fit_test();
 else {
     disc();
     translate([pointer_layout_x, 0, 0]) pointer();
     translate([coupon_layout_x, 0, 0]) coupon();
+    translate([-2.5 * screw_layout_pitch, -disc_d / 2 - layout_gap - nut_d / 2, 0]) screws();
 }

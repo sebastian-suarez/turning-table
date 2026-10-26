@@ -9,12 +9,13 @@ Use the Homebrew `openscad@snapshot` cask (2026.10.11), plus Make and Python 3. 
 ```sh
 cd hardware/cad
 make                 # Binary STLs, Manifold backend, exported into ../measure/.
-make check           # Bounds, triangle counts, closed topology, size under 20 MB.
+make check           # Bounds, triangle counts, closed topology, size under 20 MB, screw fit.
 make check-recessed  # Export and check the recessed disc, pointer and coupon in temporary files.
 make preview         # ../measure/protractor-disc.png, pointer.png and pointer-tip.png.
 ```
 
-The exports are `protractor-disc.stl`, `pointer.stl` and `fit-coupon.stl`. The disc PNG is a top view; the pointer
+The exports are `protractor-disc.stl`, `pointer.stl`, `fit-coupon.stl` and `screws.stl` (printed substitutes
+for the two M4 screws, see below). The disc PNG is a top view; the pointer
 PNG shows the **assembled** side view at a fixed scale, with the arm above the hub; `pointer-tip.png` closes in
 on the last 6 mm so the slope and end face are legible. The pointer STL is already upside down for printing.
 In the GUI the source shows all three parts side by side, each in print orientation. Select one part with
@@ -105,9 +106,28 @@ and `--expect-min`.
 
 Keep power disconnected while fitting the printed parts. Hold the motor down with tape or a clamp so it cannot
 creep. Put the disc flat on the motor's plate and ears, centred on the boss. Clamp it with **two M4 button-head
-screws from above and nuts below the ears**. Keep every head or washer stack above the disc at **3 mm or less**;
-ordinary 2.2 mm button heads fit. Do not use 4 mm tall socket-cap heads. Avoid distorting the flat disc by
-overtightening the nuts.
+screws from above and nuts below the ears**, or with the printed substitutes below. Keep every head or washer
+stack above the disc at **3 mm or less**; ordinary 2.2 mm button heads fit. Do not use 4 mm tall socket-cap
+heads. Avoid distorting the flat disc by overtightening the nuts.
+
+#### Printed substitute screws (`screws.stl`)
+
+Two bolts and four nuts, printed with the same thread so they only fit each other; they are not M4. The bolt is
+Ø3.9 so it passes the motor's Ø4.2 steel ear hole, its knurled head is 2.4 mm tall, inside the 3 mm keep-out under
+the pointer arm, and it is turned by hand. Each nut has one flat side: the ear hole is only 3.5 mm from the motor
+can, so a round nut would hit the can. Turn the flat toward the can; it then also stops the nut from spinning, so
+you hold nothing and turn only the head, clockwise to tighten.
+
+- **Print:** bolts standing on their heads (as exported), nuts flat. No supports. 100% infill for this plate, and
+  0.12 or 0.16 mm layers if your profile offers them (0.2 mm works too: the coarse 1.5 mm pitch is chosen for it).
+  Print slowly with full cooling; the bolts are thin.
+- **Nuts:** two plain nuts are the snug fit; two spares with a small notch on the rim opposite the flat are looser.
+  Try a plain nut on a bolt first. If it binds after a turn, use the notched ones. Never force a printed thread.
+- **Fit:** bolt down through the disc and the ear, nut under the ear with its flat against the can, then turn the
+  head until the disc is held. Finger-tight is enough: the screws only stop the disc from turning; the boss centres
+  it. They are PLA, so replace them with metal M4 button-head screws when you have some.
+- `make check` verifies the thread in the model: a plain nut screwed on at a whole number of turns must not touch
+  the bolt, and the same nut pushed a quarter turn without turning must (that is what makes it hold).
 
 Turn the printed pointer right way up, with its arm on top, and align both bore flats with the shaft. Press on
 the hub; support the hub rather than pushing on the long arm. The hub's plate-facing end (top as printed) has a

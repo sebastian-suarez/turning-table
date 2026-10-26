@@ -21,7 +21,8 @@ commands and what to expect. Record the readings at the end in `docs/phase-2-ver
   pointer with the same `tick_style = "recessed"` as the disc; the pointer's hub height depends on that style.
 - With both supplies still disconnected, hold the motor down (tape or a clamp) so it cannot creep. Centre the
   printed disc on the shaft boss and clamp it to the ears with **two M4 button-head screws from above, nuts
-  underneath**. Heads and any washers above the disc must total at most 3 mm; do not use 4 mm socket-cap heads.
+  underneath**, or the printed substitutes in `screws.stl` (flat side of each nut toward the motor can; see
+  `hardware/measure/README.md`). Heads and any washers above the disc must total at most 3 mm; do not use 4 mm socket-cap heads.
   Align the pointer's double-D flats with the shaft and press on the hub, arm uppermost. The Ø5.3 round relief
   at the hub's plate-facing end is 1.8 mm deep by default (2.2 mm for recessed ticks), allowing it to pass the
   shaft's round base and reach the paper gap while retaining 4.1 mm of double-D engagement. Find the highest

@@ -44,6 +44,11 @@ replacing the default exports.
 
 ### Coupon: locate the motor and choose a fit
 
+Verified on the project's motor on 2026-10-26: the disc and coupon holes locate on the boss and line up with
+the ears, and the pointer printed at the default `flat_fit = 3.0` and `round_bore_d = 5.3` passes the twist and
+rock checks, so no parameter change or reprint was needed. Repeat the steps below for a different motor or
+filament.
+
 1. With both supplies disconnected, put the coupon **plate down** over the motor's shaft and boss. Its Ø9.4
    centre hole locates on the Ø9 boss with a designed 0.2 mm radial clearance; the plate must sit flat on the
    mounting plate and ears. Up to about 0.3 mm of slide is within the 0.2° budget, but there must be no visible

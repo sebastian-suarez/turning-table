@@ -5,7 +5,7 @@ The user has a Creality Hi (260 × 260 × 300 mm) and no paper printer, so the p
 Phase 2 hardware acceptance (`docs/phase-2-acceptance.md`). This is also the first parametric OpenSCAD part of the
 project, so it sets the conventions for Phase 4.
 
-v1 → v2 (Astra attack, three findings, all accepted): the pointer arm now rides above the screw heads and carries a
+v1 → v2 (plan attack, three findings, all accepted): the pointer arm now rides above the screw heads and carries a
 blade that reaches down to the ticks (v1 swept a 1 mm-high arm through 2.2 mm-high button heads at r = 19.2 mm);
 the hub fit is set by the across-flats dimension with an interference series on the coupon and a no-play check
 (v1's uniform clearance left up to ±4° of rotational play on the double-D); the reading datum is the blade's lower
@@ -16,14 +16,15 @@ v2 → v2.1 (implementer's finding): the shaft is round below z = 4 (its flats c
 double-D bore running the full hub height could never descend to z = 3.1. The lowest 1.1 mm of every double-D
 bore (hub and coupon rings) is now a round relief.
 
-v2.1 → v2.2 (round-1 reviews of the implementation: Astra two findings, Fable nine, all accepted; the two they
+v2.1 → v2.2 (review round 1 of the implementation: the task reviewer two findings, the artifact reviewer nine, all
+accepted; the two they
 share come first): the v2 blade hung
 straight down from the arm with its reading edge chamfered to a line under the blade body, so from above the
 user could only see the blade's top, 6.3 mm above the ticks, and the parallax was 1° at 15°, worse than the
 paper pointer; the tip is now a low wedge that reaches beyond the arm so its 0.8 mm-tall end is the visible
 datum. And the arm height was derived from the tick height, so `tick_style = "recessed"` lowered the arm and
 failed the 1 mm screw-head clearance; the arm height is now derived from the head keep-out alone and the hub
-height follows from it. Fable's other findings: the M3 clamp's nut pocket left a 0.5 mm wall against the bore
+height follows from it. The artifact reviewer's other findings: the M3 clamp's nut pocket left a 0.5 mm wall against the bore
 flat (the pocket now starts outside the flat and the hub grows to Ø18 when `hub_clamp` is on); the 50 × 26 mm
 coupon envelope put three test collars across the Ø9.4 boss hole, thinning their walls to 1.1 mm so they fit
 softer than the real hub (the plate is now 70 × 34 mm with the five collars in one row clear of every hole);
@@ -33,7 +34,8 @@ at the highest point of the sweep, the coupon print time (20 to 30 minutes), and
 
 v2.2 → v2.3 (round-2 reviews; the maintainer's own fix in between: the wedge was fused to the arm along shared
 faces and Manifold exported zero-area triangles, so the tip piece now owns everything beyond the arm's taper
-and its root sits one layer inside the arm). Astra one finding and Fable seven, all minor; accepted: the bar's
+and its root sits one layer inside the arm). The task reviewer one finding and the artifact reviewer
+seven, all minor; accepted: the bar's
 underside was a 0.8 mm cantilever in print, found by both (the slope now runs at 45° all the way to the end
 face); the head-clearance assert compared doubles exactly and failed at a true 1.0 mm for an 11-layer disc
 (epsilon); the pointer preview was too small to show the tip (fixed scale plus a tip close-up); "no

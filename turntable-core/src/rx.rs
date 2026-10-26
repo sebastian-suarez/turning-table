@@ -19,7 +19,6 @@ pub struct RxBuffer {
     bytes: [u8; RX_CAPACITY],
     head: u8,
     len: u8,
-    sticky_error: bool,
     discarding: bool,
     loss_generation: u32,
     notified_generation: u32,
@@ -37,7 +36,6 @@ impl RxBuffer {
             bytes: [0; RX_CAPACITY],
             head: 0,
             len: 0,
-            sticky_error: false,
             discarding: false,
             loss_generation: 0,
             notified_generation: 0,
@@ -66,7 +64,6 @@ impl RxBuffer {
             // than 2^32 faults per byte/acceptance or undrained notice backlog
             // (over eight days at the UART's byte rate, versus millisecond TX).
             self.loss_generation = self.loss_generation.wrapping_add(1);
-            self.sticky_error = true;
             self.discarding = true;
         }
         // FE/UPE taint even a byte that reads as LF, including when DOR is
@@ -110,13 +107,6 @@ impl RxBuffer {
         let byte = self.bytes[self.head as usize];
         self.head = (self.head + 1) & 31;
         self.len -= 1;
-        // A DOR-only mid-line byte can precede the recovery LF in the queue.
-        // Consuming that valid byte must not clear the sticky loss early.
-        // Every pre-loss delimiter was flushed, so only a post-loss LF can
-        // clear it. Queue, marker and clear are atomic under firmware's mutex.
-        if byte == b'\n' {
-            self.sticky_error = false;
-        }
         Some(RxItem {
             byte,
             corrupted: false,
@@ -135,10 +125,6 @@ impl RxBuffer {
         } else {
             None
         }
-    }
-
-    pub const fn has_error(&self) -> bool {
-        self.sticky_error
     }
 }
 
@@ -172,6 +158,5 @@ mod boundary_tests {
         );
         assert_eq!(recovery.generation, 0);
         assert_eq!(rx.accept_if_current(recovery.generation, || 7), Some(7));
-        assert!(!rx.has_error());
     }
 }

@@ -794,13 +794,15 @@ fn ring_overflow_without_newline_reports_once_but_keeps_sticky_discard() {
         rx.receive(b'X', false, false);
     }
     assert_eq!(drain(&mut rx, &mut assembler), vec![Err(Error::Line)]);
-    assert!(rx.has_error());
+    // The line-length limit alone would also report one ERR LINE here. Check
+    // that the ring registered the overflow as a loss: a line dequeued before
+    // it (generation 0, a new buffer's) can no longer execute.
+    assert_eq!(rx.accept_if_current(0, || ()), None);
     assert!(drain(&mut rx, &mut assembler).is_empty());
     for &byte in b"tail\nPOS\n" {
         rx.receive(byte, false, false);
     }
     assert_eq!(drain(&mut rx, &mut assembler), vec![Ok(Command::Pos)]);
-    assert!(!rx.has_error());
 }
 
 #[test]
@@ -809,7 +811,6 @@ fn production_ring_preserves_all_32_bytes_and_wraps_in_fifo_order() {
     for byte in 0..32 {
         rx.receive(byte, false, false);
     }
-    assert!(!rx.has_error());
     for byte in 0..16 {
         assert_eq!(rx.pop().unwrap().byte, byte);
     }
@@ -837,14 +838,15 @@ fn production_ring_overflow_sticky_error_and_lost_newline_recover_once() {
         for _ in 0..burst {
             rx.receive(b'1', false, false);
         }
+        // The ring, not just the assembler's length limit, registers each
+        // overflow as a loss: a line dequeued before it (generation 0, a new
+        // buffer's) can no longer execute. The 33rd byte overflows a 40-byte
+        // burst; an exactly full ring overflows on the LF itself.
         if !newline_is_overflow_byte {
-            assert!(rx.has_error());
+            assert_eq!(rx.accept_if_current(0, || ()), None);
         }
         rx.receive(b'\n', false, false);
-        assert!(
-            rx.has_error(),
-            "sticky until main consumes the recovery marker"
-        );
+        assert_eq!(rx.accept_if_current(0, || ()), None);
         for &byte in b"POS\n" {
             rx.receive(byte, false, false);
         }
@@ -852,7 +854,6 @@ fn production_ring_overflow_sticky_error_and_lost_newline_recover_once() {
             drain(&mut rx, &mut assembler),
             vec![Err(Error::Line), Ok(Command::Pos)]
         );
-        assert!(!rx.has_error());
     }
 }
 
@@ -883,13 +884,11 @@ fn corrupt_frame_newline_is_not_a_trustworthy_recovery_delimiter() {
     }
     rx.receive(b'\n', false, true);
     let mut events = drain(&mut rx, &mut assembler);
-    assert!(rx.has_error());
     for &byte in b"0\nPOS\n" {
         rx.receive(byte, false, false);
     }
     events.extend(drain(&mut rx, &mut assembler));
     assert_eq!(events, vec![Err(Error::Line), Ok(Command::Pos)]);
-    assert!(!rx.has_error());
 }
 
 #[test]
@@ -1046,7 +1045,6 @@ impl RxConsole {
     fn assert_recovery(&mut self, losses: usize, position_before: i32) {
         self.drain();
         assert_eq!(self.events, vec![Err(Error::Line); losses]);
-        assert!(self.rx.has_error());
         assert_eq!(self.controller.snapshot().position, position_before);
         assert_eq!(self.controller.snapshot().state, State::Idle);
         self.receive(b"\n");
@@ -1058,7 +1056,6 @@ impl RxConsole {
         // directly: an extra blank line would hide a discarded DOR-only LF.
         self.receive(b"STEP 3\n");
         self.drain();
-        assert!(!self.rx.has_error());
         let mut expected = vec![Err(Error::Line); losses];
         expected.push(Ok(Command::Step(3)));
         assert_eq!(self.events, expected);
@@ -1136,7 +1133,6 @@ fn framing_or_parity_error_on_lf_discards_next_line_even_with_dor() {
             // The protocol has ERR LINE for transport damage, with no separate
             // FE/UPE reply. Several flags on one read still count as one loss.
             assert_eq!(console.events, vec![Err(Error::Line), Ok(Command::Step(4))]);
-            assert!(!console.rx.has_error());
             assert_eq!(finish(&mut console.controller), 4);
             assert_eq!(console.planner.k(), 0);
         }
@@ -1164,7 +1160,6 @@ fn dor_mid_line_byte_is_delivered_but_discarded_until_its_lf() {
         }
     );
     console.process(after_gap);
-    assert!(console.rx.has_error(), "only recovery LF clears the loss");
     assert_eq!(console.events, vec![Err(Error::Line)]);
     assert_eq!(console.controller.snapshot().state, State::Idle);
     console.receive(b"0\n");

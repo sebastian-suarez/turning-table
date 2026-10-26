@@ -3,6 +3,12 @@ name = "turntable-firmware"
 version = "0.1.0"
 edition = "2021"
 publish = false
+description = "Firmware for a 3D-printed photogrammetry turntable: ATmega328PB Nano, two 28BYJ-48 steppers, serial console"
+license = "MIT"
+repository = "https://github.com/sebastian-suarez/turning-table"
+homepage = "https://github.com/sebastian-suarez/turning-table#readme"
+readme = "../README.md"
+keywords = ["photogrammetry", "turntable", "avr", "arduino", "stepper-motor"]
 
 [[bin]]
 name = "turntable-firmware"

@@ -3,6 +3,12 @@ name = "turntable-core"
 version = "0.1.0"
 edition = "2021"
 publish = false
+description = "Hardware-independent logic of the turntable firmware: line assembly, command parser, stop planner, motion controller"
+license = "MIT"
+repository = "https://github.com/sebastian-suarez/turning-table"
+homepage = "https://github.com/sebastian-suarez/turning-table#readme"
+readme = "../README.md"
+keywords = ["photogrammetry", "turntable", "stepper-motor", "no-std", "embedded"]
 
 # Deliberately not a workspace: a host test must never inherit firmware's AVR
 # target, build-std configuration or pinned nightly. This crate needs only core.

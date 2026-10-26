@@ -94,8 +94,11 @@ Legend: [x] done, [~] in progress, [ ] todo. Written 2026-10-22; decisions recor
 6. **Hardening** [ ], optional. Index sensor for homing, calibration in EEPROM, enclosure, CI building the Nano
    and UNO variants.
 
-## Open questions for the user
+## Questions for the user (all answered)
 
 - Does the kit contain a second 28BYJ-48 + ULN2003 (for the lift), or should the lift use the SG90 arm?
-- Phone model (weight, dimensions) and the largest object to scan.
-- Printer bed size.
+  **Answered 2026-10-22:** the kit has one; a second one was bought the same day and drives the camera arc arm
+  (D1, Phase 4); the SG90 is a spare.
+- Phone model (weight, dimensions) and the largest object to scan. **Answered 2026-10-22:** iPhone Air or iPhone
+  18 Pro Max; a car side-mirror cap, roughly 20-25 cm long (Phase 4 inputs).
+- Printer bed size. **Answered 2026-10-22:** Creality Hi, 260 × 260 × 300 mm.

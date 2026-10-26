@@ -1,6 +1,9 @@
 //! A motion is measured in 1 ms tick intervals, never in blocking delays.
 
-use crate::{Direction, Error, PreparedCommand, Sequencer};
+use crate::{
+    command::{MAX_PERIOD_MS, MIN_PERIOD_MS},
+    Direction, Error, PreparedCommand, Sequencer,
+};
 
 pub const POSITION_LIMIT: i32 = 1 << 30;
 pub const ENERGISE_MS: u8 = 20;
@@ -121,7 +124,7 @@ impl Controller {
             }
             PreparedCommand::Zero => self.position = 0,
             PreparedCommand::Speed(period) => {
-                if !(1..=50).contains(&period) {
+                if !(MIN_PERIOD_MS..=MAX_PERIOD_MS).contains(&period) {
                     return Err(Error::Range);
                 }
                 self.period_ms = period;

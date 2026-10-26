@@ -1,6 +1,9 @@
 //! Fixed-point geometry. This module runs in main, with interrupts enabled.
 
-use crate::{Command, Controller, Error, Snapshot, State};
+use crate::{
+    command::{MAX_PERIOD_MS, MAX_STOPS, MIN_PERIOD_MS, MIN_STOPS, ROT_LIMIT_TENTHS, STEP_LIMIT},
+    Command, Controller, Error, Snapshot, State,
+};
 
 /// Measured in *hundredths* of a half-step per platter revolution. Keeping the
 /// fraction avoids repeated-stop drift for gearboxes whose ratio is not whole.
@@ -41,7 +44,7 @@ pub struct Planner {
 
 impl Planner {
     pub const fn new(ratio_x100: u32, stops: u16) -> Option<Self> {
-        if ratio_x100 == 0 || stops == 0 || stops > 720 {
+        if ratio_x100 == 0 || stops < MIN_STOPS || stops > MAX_STOPS {
             return None;
         }
         Some(Self {
@@ -73,7 +76,7 @@ impl Planner {
     /// would lose fractional information before rounding. Even 36000*409600
     /// exceeds i32, which is why the intermediate is deliberately wider.
     pub fn degrees_to_halfsteps(&self, tenths: i32) -> Option<i32> {
-        if !(-36_000..=36_000).contains(&tenths) {
+        if !(-ROT_LIMIT_TENTHS..=ROT_LIMIT_TENTHS).contains(&tenths) {
             return None;
         }
         let numerator = i64::from(tenths) * i64::from(self.ratio_x100);
@@ -101,7 +104,7 @@ impl Planner {
         }
         let prepared = match command {
             Command::Step(steps) => {
-                if !(-1_000_000..=1_000_000).contains(&steps) {
+                if !(-STEP_LIMIT..=STEP_LIMIT).contains(&steps) {
                     return Err(Error::Range);
                 }
                 PreparedCommand::Move(steps)
@@ -123,7 +126,7 @@ impl Planner {
                 }
             }
             Command::Stops(stops) => {
-                if !(1..=720).contains(&stops) {
+                if !(MIN_STOPS..=MAX_STOPS).contains(&stops) {
                     return Err(Error::Range);
                 }
                 PreparedCommand::Stops {
@@ -133,7 +136,7 @@ impl Planner {
             }
             Command::Zero => PreparedCommand::Zero,
             Command::Speed(period) => {
-                if !(1..=50).contains(&period) {
+                if !(MIN_PERIOD_MS..=MAX_PERIOD_MS).contains(&period) {
                     return Err(Error::Range);
                 }
                 PreparedCommand::Speed(period)

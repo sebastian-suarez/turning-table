@@ -2,6 +2,22 @@
 
 use crate::{line::MAX_LINE_BYTES, Error};
 
+// The console protocol's numeric limits (spec, "Console protocol"), each
+// defined once. The parser answers ERR RANGE outside them; Planner and
+// Controller check the same constants again, so a Command or PreparedCommand
+// built in code cannot bypass them. Compile-time constants cost no RAM or flash.
+
+/// `STEP n` accepts |n| up to this many half-steps.
+pub const STEP_LIMIT: i32 = 1_000_000;
+/// `ROT deg` accepts |deg| up to 3600.0 (ten turns), counted here in tenths.
+pub const ROT_LIMIT_TENTHS: i32 = 36_000;
+/// `STOPS n` accepts MIN_STOPS..=MAX_STOPS stops per revolution.
+pub const MIN_STOPS: u16 = 1;
+pub const MAX_STOPS: u16 = 720;
+/// `SPEED ms` accepts MIN_PERIOD_MS..=MAX_PERIOD_MS ms (ticks) per half-step.
+pub const MIN_PERIOD_MS: u8 = 1;
+pub const MAX_PERIOD_MS: u8 = 50;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command {
     Step(i32),
@@ -44,19 +60,21 @@ impl Command {
 
         if verb.eq_ignore_ascii_case(b"STEP") {
             let n = integer(argument.ok_or(Error::Syntax)?)?;
-            return bounded(n, -1_000_000, 1_000_000).map(Self::Step);
+            return bounded(n, -STEP_LIMIT, STEP_LIMIT).map(Self::Step);
         }
         if verb.eq_ignore_ascii_case(b"ROT") {
             let tenths = degrees(argument.ok_or(Error::Syntax)?)?;
-            return bounded(tenths, -36_000, 36_000).map(Self::Rot);
+            return bounded(tenths, -ROT_LIMIT_TENTHS, ROT_LIMIT_TENTHS).map(Self::Rot);
         }
         if verb.eq_ignore_ascii_case(b"STOPS") {
             let n = integer(argument.ok_or(Error::Syntax)?)?;
-            return bounded(n, 1, 720).map(|n| Self::Stops(n as u16));
+            return bounded(n, i32::from(MIN_STOPS), i32::from(MAX_STOPS))
+                .map(|n| Self::Stops(n as u16));
         }
         if verb.eq_ignore_ascii_case(b"SPEED") {
             let n = integer(argument.ok_or(Error::Syntax)?)?;
-            return bounded(n, 1, 50).map(|n| Self::Speed(n as u8));
+            return bounded(n, i32::from(MIN_PERIOD_MS), i32::from(MAX_PERIOD_MS))
+                .map(|n| Self::Speed(n as u8));
         }
         if argument.is_some() {
             return Err(Error::Syntax);
@@ -141,6 +159,6 @@ fn degrees(token: &[u8]) -> Result<i32, Error> {
     let whole = signed_digits(whole, negative)?;
     // Bound first, then scale: 3600*10+9 fits comfortably in i32. The caller
     // enforces the final tenths limit, rejecting e.g. ROT 3600.1 as RANGE.
-    bounded(whole, -3600, 3600)?;
+    bounded(whole, -ROT_LIMIT_TENTHS / 10, ROT_LIMIT_TENTHS / 10)?;
     Ok(whole * 10 + if negative { -fraction } else { fraction })
 }

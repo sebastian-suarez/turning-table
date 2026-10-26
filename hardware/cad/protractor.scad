@@ -5,7 +5,6 @@
 
 /* [Selection] */
 part = "all";                    // [all, disc, pointer, coupon, screws, screw_fit_test]
-tick_style = "raised";           // [raised, recessed]
 assembled_view = false;          // Only for the pointer side PNGs; leave false for STL.
 
 /* [Motor: mounting plate is z = 0, shaft points toward +z] */
@@ -25,7 +24,7 @@ disc_h = 2.4;                   // Twelve 0.2 mm layers: enough stiffness withou
 boss_radial_clearance = 0.2;    // Ø9.4: leave room for FDM holes printing slightly undersize.
 boss_hole_d = motor_boss_d + 2 * boss_radial_clearance;
 mount_hole_d = 4.6;             // M4 screws clamp; these holes deliberately do not centre it.
-mark_h = 0.4;                   // Two layers, either raised or recessed for marker filling.
+mark_h = 0.4;                   // Two layers of raised ticks and numerals.
 tick_rim = 2.0;
 tick_outer_r = disc_d / 2 - tick_rim;
 tick_step = 1;
@@ -40,7 +39,6 @@ minor_width = 0.5;              // A dependable single line from a 0.4 mm nozzle
 medium_width = 0.8;             // Two nozzle widths make the 5° and 10° ticks distinct.
 major_width = 0.8;
 zero_width = 1.2;
-groove_width = 0.6;             // A marker can reach the recessed alternative.
 label_size = 5.0;
 label_inset = 16.0;
 label_r = disc_d / 2 - label_inset; // r = 79 at the default diameter; follows disc_d.
@@ -165,25 +163,26 @@ mark_colour = [0.12, 0.14, 0.16];
 pointer_colour = [0.90, 0.43, 0.15];
 
 /* [Derived assembly stack-up: NOT the upside-down print coordinates] */
-ticks_top_z = disc_h + (tick_style == "raised" ? mark_h : 0);
-arm_bottom_z = disc_h + max_head_h + required_head_gap; // 6.4, for EITHER tick style.
+ticks_top_z = disc_h + mark_h;
+arm_bottom_z = disc_h + max_head_h + required_head_gap; // 6.4: 1 mm above a 3 mm head.
 arm_top_z = arm_bottom_z + arm_h;         // 8.8; the nominal shaft tip leaves 1.2 exposed.
-hub_bottom_z = ticks_top_z + tip_gap;     // 2.9 raised, 2.5 recessed, at the 0.1 mm paper gap.
+hub_bottom_z = ticks_top_z + tip_gap;     // 2.9, at the 0.1 mm paper gap.
 hub_top_z = arm_top_z;
-hub_h = hub_top_z - hub_bottom_z;         // Derived: 5.9 raised, 6.3 recessed.
+hub_h = hub_top_z - hub_bottom_z;         // Derived: 5.9.
 // The shaft is round below z = 4: full-height bore flats would stop the hub there,
 // before the tip reached its paper gap. Clear that length plus the clone margin;
 // the shoulder in use is z = 4.7, leaving 4.1 mm of flats up to the arm's top.
 bore_relief_h = (motor_shaft_h - motor_flat_length) - hub_bottom_z + relief_margin;
-bore_engagement_h = hub_h - bore_relief_h; // 1.8 mm relief raised, 2.2 recessed; same grip.
+bore_engagement_h = hub_h - bore_relief_h; // 4.1 mm of flats above the 1.8 mm relief.
 head_top_z = disc_h + max_head_h;          // 5.4 for a 3 mm button head.
 // Use the actual print-space arm and tip faces, reflected into assembly z.
 head_clearance = (hub_top_z - arm_h) - head_top_z;
 tip_datum_print_z = hub_h;
 tip_bar_top_print_z = tip_datum_print_z - tip_bar_h;
 // A 45° slope reaches the end face directly, without a flat overhang at its end.
-// Raised ticks leave a 0.3 mm ledge at arm_h (r = 90 ... 90.3). Recessed ticks
-// would start at 89.9, so clamp to the neck's end at 90 for a slightly steeper face.
+// It starts 0.3 mm beyond the neck's end, leaving a ledge at arm_h (r = 90 ... 90.3).
+// Other parameters (max_head_h above 3.3, for one) would start it inside the neck,
+// so clamp to the neck's end at 90 for a slightly steeper face.
 tip_slope_start_r = max(arm_end_r, tip_outer_r - (tip_bar_top_print_z - arm_h));
 tip_slope_overhang_deg = atan((tip_outer_r - tip_slope_start_r) /
                              (tip_bar_top_print_z - arm_h)); // From vertical in print.
@@ -191,14 +190,12 @@ tip_bottom_z = hub_top_z - tip_datum_print_z;
 tip_clearance = tip_bottom_z - ticks_top_z;
 coupon_top_z = coupon_h + hub_h;
 // Lower the local label pad, then raise dots from its floor. The dots are 0.4 mm
-// proud of that pad but stay inside the 8.3 mm raised / 8.7 mm recessed height.
+// proud of that pad but stay inside the coupon's 8.3 mm height.
 label_pad_z = coupon_top_z - dot_h;
 
 assert(part == "all" || part == "disc" || part == "pointer" || part == "coupon" ||
        part == "screws" || part == "screw_fit_test",
        "part must be all, disc, pointer, coupon, screws or screw_fit_test");
-assert(tick_style == "raised" || tick_style == "recessed",
-       "tick_style must be raised or recessed");
 assert(flat_fit > 0 && flat_fit < round_bore_d, "flat_fit must leave two flats");
 assert(len(flat_series) == 5, "flat_series needs five candidates");
 assert(bore_relief_h >= 0, "Round relief cannot have a negative height");
@@ -240,8 +237,8 @@ function tick_length(angle) = angle == 0 ? zero_length :
     angle % major_step == 0 ? major_length :
     angle % medium_step == 0 ? medium_length : minor_length;
 
-function tick_width(angle) = tick_style == "recessed" ? groove_width :
-    angle == 0 ? zero_width : angle % major_step == 0 ? major_width :
+function tick_width(angle) = angle == 0 ? zero_width :
+    angle % major_step == 0 ? major_width :
     angle % medium_step == 0 ? medium_width : minor_width;
 
 module markings_2d() {
@@ -265,25 +262,15 @@ module markings_2d() {
 }
 
 module disc() {
-    if (tick_style == "raised") {
-        color(body_colour)
-            difference() {
-                cylinder(d = disc_d, h = disc_h);
-                mounting_holes(disc_h);
-            }
-        // Start slightly INSIDE the base: each raised stroke is fused to it.
-        color(mark_colour)
-            translate([0, 0, disc_h - boolean_overlap])
-                linear_extrude(height = mark_h + boolean_overlap) markings_2d();
-    } else {
-        color(body_colour)
-            difference() {
-                cylinder(d = disc_d, h = disc_h);
-                mounting_holes(disc_h);
-                translate([0, 0, disc_h - mark_h])
-                    linear_extrude(height = mark_h + boolean_overlap) markings_2d();
-            }
-    }
+    color(body_colour)
+        difference() {
+            cylinder(d = disc_d, h = disc_h);
+            mounting_holes(disc_h);
+        }
+    // Start slightly INSIDE the base: each raised stroke is fused to it.
+    color(mark_colour)
+        translate([0, 0, disc_h - boolean_overlap])
+            linear_extrude(height = mark_h + boolean_overlap) markings_2d();
 }
 
 module arm_2d() {
@@ -316,8 +303,8 @@ module tip_wedge() {
                          [arm_tip_r + tip_root_step, tip_root_sink],
                          [arm_tip_r + tip_root_step, 0],
                          [arm_end_r, 0],
-                         // Keep the ledge only when it has length: the recessed
-                         // clamp must not leave duplicate polygon vertices.
+                         // Keep the ledge only when it has length: a clamped
+                         // slope must not leave duplicate polygon vertices.
                          if (tip_slope_start_r > arm_end_r) [arm_end_r, arm_h],
                          [tip_slope_start_r, arm_h],
                          [tip_outer_r, tip_bar_top_print_z],

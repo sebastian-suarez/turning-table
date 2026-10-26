@@ -10,7 +10,6 @@ Use the Homebrew `openscad@snapshot` cask (2026.10.11), plus Make and Python 3. 
 cd hardware/cad
 make                 # Binary STLs, Manifold backend, exported into ../measure/.
 make check           # Bounds, triangle counts, closed topology, size under 20 MB, screw fit.
-make check-recessed  # Export and check the recessed disc, pointer and coupon in temporary files.
 make preview         # ../measure/protractor-disc.png, pointer.png and pointer-tip.png.
 ```
 
@@ -35,13 +34,6 @@ The slicer must print thin walls (Arachne in PrusaSlicer or OrcaSlicer, "print t
 - **Pointer:** its arm's broad **top** face and the hub's top face on the bed. The hub and tip wedge grow upward
   from that face; the tip is a 45° overhang with no cantilever and needs no supports. Turn it over after printing.
   It weighs a few grams.
-
-The optional `tick_style = "recessed"` engraves 0.6 mm wide, 0.4 mm deep ticks and recesses the numerals for
-marker filling. Export the **pointer with the same tick style as the disc**: its hub is 5.9 mm high for raised
-ticks and 6.3 mm for recessed ticks, keeping the arm at the same height above the screw heads. Set the style in
-the source and re-export all three parts. The recessed coupon is 8.7 mm tall with a 2.2 mm round relief.
-`make check-recessed` checks the 2.4 mm disc, 6.3 mm pointer and 8.7 mm coupon in temporary files without
-replacing the default exports.
 
 ### Coupon: locate the motor and choose a fit
 
@@ -140,8 +132,7 @@ stops on its relief shoulder before reaching that paper gap, the motor's flats s
 lower `motor_flat_length` in the source and re-export the pointer rather than forcing the hub down.
 
 At the model's tightest 0.1 mm gap, the raised-tick hub bottom and tip's lower face are at z = 2.9 mm; the arm
-underside is at 6.4 mm and its top at 8.8 mm. With recessed ticks the hub bottom is at 2.5 mm and the relief is
-2.2 mm deep, while the arm height and 4.1 mm engagement stay the same. The `echo()` values report 1 mm above a
+underside is at 6.4 mm and its top at 8.8 mm. The `echo()` values report 1 mm above a
 3 mm head, 0.1 mm above the tick surface, and the relief and engagement lengths. A larger paper gap raises the
 whole pointer and increases head clearance.
 

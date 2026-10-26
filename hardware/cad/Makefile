@@ -10,7 +10,7 @@ PNGS := $(OUT)/protractor-disc.png $(OUT)/pointer.png $(OUT)/pointer-tip.png
 STL_FLAGS := --backend=manifold --export-format binstl --hardwarnings
 PNG_FLAGS := --backend=manifold --hardwarnings --projection=o
 
-.PHONY: all check check-recessed check-screw-fit preview clean
+.PHONY: all check check-screw-fit preview clean
 .DELETE_ON_ERROR:
 
 all: $(STLS)
@@ -39,21 +39,6 @@ check: all
 	@$(PYTHON) stl_bounds.py --max-size 64 9 11.4 $(OUT)/screws.stl
 	@$(MAKE) --no-print-directory check-screw-fit
 
-# Recessed ticks need their matching, taller hub and coupon. Export all three in isolation;
-# a style check must never replace the raised STLs waiting to go to the slicer.
-# One shell keeps the scratch path and cleanup trap alive through every command.
-check-recessed:
-	@set -eu; \
-	scratch=$$(mktemp -d "$${TMPDIR:-/tmp}/protractor-recessed.XXXXXX"); \
-	trap 'rm -rf "$$scratch"' 0; \
-	trap 'exit 1' 1 2 15; \
-	$(OPENSCAD) $(STL_FLAGS) $(SCAD_ARGS) -D 'tick_style="recessed"' -D 'part="disc"' -o "$$scratch/protractor-disc.stl" "$(SOURCE)"; \
-	$(PYTHON) stl_bounds.py --expect-size 190 190 2.4 --expect-min -95 -95 0 "$$scratch/protractor-disc.stl"; \
-	$(OPENSCAD) $(STL_FLAGS) $(SCAD_ARGS) -D 'tick_style="recessed"' -D 'part="pointer"' -o "$$scratch/pointer.stl" "$(SOURCE)"; \
-	$(PYTHON) stl_bounds.py --expect-size 100 14 6.3 --expect-min -7 -7 0 "$$scratch/pointer.stl"; \
-	$(OPENSCAD) $(STL_FLAGS) $(SCAD_ARGS) -D 'tick_style="recessed"' -D 'part="coupon"' -o "$$scratch/fit-coupon.stl" "$(SOURCE)"; \
-	$(PYTHON) stl_bounds.py --max-size 70 34 8.7 --expect-min -35 -13.3 0 "$$scratch/fit-coupon.stl"
-
 preview: $(PNGS)
 
 # Orthographic, exactly from +z: no perspective can reverse the clockwise scale.
@@ -77,6 +62,7 @@ clean:
 # The printed bolt and nut must mate: the snug nut screwed on at a whole number
 # of pitches must not intersect the bolt, while the same nut pushed a quarter
 # pitch without turning must (otherwise the thread would not hold).
+# One shell keeps the scratch path and cleanup trap alive through every command.
 check-screw-fit:
 	@set -eu; \
 	scratch=$$(mktemp -d "$${TMPDIR:-/tmp}/protractor-screws.XXXXXX"); \

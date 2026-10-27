@@ -56,3 +56,48 @@ Verification runs and review rounds, without model names; the models that served
       142, its inner section 67.
     - EEPROM: the strobe is `in SREG; cli; sbi EEMPE; sbi EEPE; out SREG` (6 cycles masked); the `EEPE` waits run
       with interrupts enabled, unchanged bytes are skipped, every written byte is read back through `EERE`.
+- 2026-10-27: review round 1 on `96a85bb..17d44e9`. Task reviewer (diff and spec): needs-attention, 1 medium,
+  2 low, 1 spec ambiguity. Artifact reviewer (diff and test output only): needs-attention, 2 high, 2 medium. All
+  confirmed by the hub against the code; two were found by both reviewers. Root of the first four: the TC2 ISR sets
+  a motor `Idle` and fills its mailbox on the same tick, but main reads states and mailboxes at different moments.
+  1. (high) `HOME` admitted with an earlier `ADONE` still queued: the stale event fails the new search, disarms the
+     switch halt, prints `ERR HOME`, and the 80° search keeps driving the arm down unprotected.
+  2. (high) A button press registered while a scan or move is active is judged after `service()` has processed the
+     completion, so it starts a new scan instead of stopping.
+  3. (medium) `service()` takes the mailboxes before it snapshots the motors: `END` can precede the final `DONE`
+     and undercount; equal consecutive ring heights also undercount.
+  4. (medium) `POS` during a scan can consume a turn's `DONE` without the turn accounting.
+  5. (low) `STOP` during the last turn's hold or settle does not count a turn that finished all its half-steps.
+  - Rejected: the reviewers' suggestion of deterministic interleaving tests for the firmware glue; the firmware
+    crate has no test harness (`test = false`). W6-W8 exercise these paths on the board but cannot reproduce
+    microsecond-wide races, so for those races the two reviews are the only evidence.
+  - Spec ambiguity (low): `SCAN <r> <p> <i>` runs every check before it saves, so a refused scan is never saved;
+    the spec's "saves them ..., then runs" can be read as save first. Put to the user.
+  - Fix round 1 dispatched to the implementation route for findings 1-5.
+- 2026-10-27: decision (user): `SCAN <r> <p> <i>` keeps the implemented order: every check runs first and only an
+  accepted scan is saved, so the button never replays a scan it cannot run. An `ERR SAVE` leaves the new scan in RAM
+  and does not run it. Recorded here and in the Phase 3 docs (task 9); no spec version bump.
+- 2026-10-27: fix round 1 (`2346755`, `firmware/src/main.rs` only) verified by the hub.
+  - Fixes: `service()` takes both snapshots and both mailboxes in one critical section and accounts for `DONE`
+    before it advances the scan or prints `END`; `Run::done` prints every completion and does the turn accounting
+    (used by `service`, `platter_command` and `HOME`); `HOME` detaches a queued `ADONE` after admission and prints
+    it before `OK`; `home_step(Failed)` halts the arm before it disarms the switch; presses are judged before
+    `service()`, a queued completion counts as busy, and a press after a busy poll acts as `STOP`; `STOP` counts a
+    turn in `Hold`/`Release`/`Settle`. Hub addition: `STATUS` clamps the ring to the scan's ring count (the implementer
+    reported that a `STOP` in the last turn's settle could show ring N+1 until `END`).
+  - F1: Phase 2 37 passed, Phase 3 32 passed, clippy and fmt clean on both crates, Nano and UNO builds.
+  - F2: `.text` 15222, `.data` 436, `.bss` 149: 15658 ≤ 16384 and 585 ≤ 640.
+  - F3: the TC2 ISR is the same 280 instructions with the same opcodes (bound 780). `platter_command`, `apply`,
+    `start_with_period`, `halt`, `tick` and the `SPEED` closure differ only in addresses, so their per-variant
+    bounds hold (accept 312, `SPEED` 186). New or changed sections: `STOP` 70, `service` 40, failed homing 27,
+    button 20 and 6, `HOME`'s `ADONE` 14.
+  - Review round 2 started on `17d44e9..2346755`.
+- 2026-10-27: review round 2 on `17d44e9..2346755`. Artifact reviewer: approve, no findings. Task reviewer: pass,
+  every fix closes its scenario, no regression in the Phase 2 reply order; 2 low findings, both confirmed by the hub:
+  1. (low, predates the fix) `start_scan` is the one command that starts motion without detaching queued
+     completions: a console `ARM`/`STEP` completing just before a `SCAN` sent without waiting prints its
+     `ADONE`/`DONE` after the scan's `OK`, where a host counting per-move events would take it for the scan's first.
+     The button path cannot hit it (a queued completion counts as busy).
+  2. (low, from fix 5) after a `STOP` in a non-final ring's settle, `STATUS` reports ring r+1 for up to 150 ms
+     until `END`; the clamp covers only the last ring.
+  Pass: no correctness finding of medium or above.

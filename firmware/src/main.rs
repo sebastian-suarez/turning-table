@@ -236,6 +236,9 @@ struct Run {
     stopping: bool,
     turning: bool,
     completed: u8,
+    /// STATUS's 1-based ring: set when each scan move starts, so a STOP that
+    /// counts a settled turn cannot make it point at a ring that never starts.
+    ring: u8,
 }
 
 impl Run {
@@ -337,6 +340,10 @@ impl Run {
             } else {
                 self.scan.as_mut().and_then(Iterator::next)
             };
+            if next.is_some() {
+                // Every move of ring r starts with r - 1 turns completed.
+                self.ring = self.completed + 1;
+            }
             let result = match next {
                 Some(ScanMove::Arm(steps)) => scan_start(true, steps, a.period_ms),
                 Some(ScanMove::Turn) => {
@@ -403,12 +410,23 @@ fn start_scan<W: ufmt::uWrite>(
     }
     run.scan = Some(scan);
     run.completed = 0;
+    run.ring = 1;
     run.turning = false;
     run.stopping = false;
     run.platter.commit(PreparedCommand::Stops {
         stops: 1,
         origin: p.position,
     });
+    // Admission saw both motors idle, so a queued completion belongs to the
+    // console move before this scan. Report it before OK, as HOME does, so a
+    // host never counts it as the scan's first move.
+    let (done, adone) = interrupt::free(|cs| (DONE.borrow(cs).take(), ADONE.borrow(cs).take()));
+    if let Some(position) = done {
+        run.done(serial, position, false);
+    }
+    if let Some(position) = adone {
+        run.done(serial, position, true);
+    }
     ok(serial);
     Ok(())
 }
@@ -486,11 +504,7 @@ fn status<W: ufmt::uWrite>(serial: &mut W, run: &Run, p: &Snapshot, a: &Snapshot
     signed_field(serial, a.position);
     unsigned_field(serial, u32::from(run.homed));
     if run.scan.is_some() {
-        // A STOP in the last turn's settle counts that turn before its DONE
-        // and END arrive; clamp so the ring never reads past the scan's last.
-        // settings.scan is the running scan: settings commands are refused now.
-        let ring = (run.completed + 1).min(run.settings.scan.rings);
-        unsigned_field(serial, u32::from(ring));
+        unsigned_field(serial, u32::from(run.ring));
     } else {
         let _ = ufmt::uwrite!(serial, " -");
     }
@@ -674,6 +688,7 @@ fn main() -> ! {
             stopping: false,
             turning: false,
             completed: 0,
+            ring: 0,
         })
     };
     let mut assembler = LineAssembler::new();

@@ -1,7 +1,7 @@
 # Spec: phase-3
 
 Version: 4
-Status: suite-ready
+Status: verified
 
 ## Problem
 

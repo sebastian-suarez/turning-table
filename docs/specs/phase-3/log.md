@@ -101,3 +101,11 @@ Verification runs and review rounds, without model names; the models that served
   2. (low, from fix 5) after a `STOP` in a non-final ring's settle, `STATUS` reports ring r+1 for up to 150 ms
      until `END`; the clamp covers only the last ring.
   Pass: no correctness finding of medium or above.
+- 2026-10-27: the user chose to fix both round-2 lows now, as hub edits after the last review round (hub checks
+  only, no review). `SCAN` detaches queued `DONE`/`ADONE` after admission and prints them before `OK`, as `HOME`
+  does. `STATUS` prints a `ring` that is set when each scan move starts (`completed + 1`), so a `STOP` that counts
+  a settled turn leaves it on that ring; this replaces the clamp. Commit `0b195f8`.
+  - F1: Phase 2 37 passed, Phase 3 32 passed, clippy and fmt clean on both crates, Nano and UNO builds.
+  - F2: `.text` 15324, `.data` 436, `.bss` 150: 15760 ≤ 16384 and 586 ≤ 640.
+  - F3: the TC2 ISR, `platter_command`, `apply`, `start_with_period` and the `SPEED` closure are the same opcodes as
+    before (bounds 780, 312, 186 hold); the new `SCAN` section is 26 cycles; nothing else changed.

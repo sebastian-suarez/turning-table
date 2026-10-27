@@ -145,3 +145,11 @@ Verification runs and review rounds, without model names; the models that served
   USB power cycle: boot without `DEFAULTS`, same `CFG`. After a reflash of the same release ELF (avrdude, the
   bootloader leaves EEPROM alone): same `CFG`. Restored with `AHOME 5` and `RINGS 10 35 60` → `CFG 409600 3276800 50
   3 36 3000 10 35 60`.
+- 2026-10-27: W6 timing pass, pointer pending. Two runs of `HOME` (switch pressed by hand) then `SCAN 1 36 3000`:
+  `OK`, `ADONE 910`, `DONE 4096`, `END 1`. Arm `ADONE` → `DONE`: 107.411 s quiet, 107.412 s with `STATUS` every
+  200 ms (532 sent, 532 answered, 0 `ERR`); predicted 4096 × 26 ms + 171 ms = 106.67 s, × 1.007 = 107.41 s. The
+  pointer was on the arm motor (D6-D10 driver), which read 40°: the arm's 455-half-step climb from 5° to 10°.
+  The platter's one-revolution check is repeated with the protractor on the platter motor (D2-D5 driver).
+  `SCAN 1 36 3000` is now the saved scan.
+- 2026-10-27: W6 pass. Third run with the protractor on the platter motor (D2-D5 driver): `HOME`, `SCAN 1 36 3000`,
+  `DONE 4096`, `END 1`, turn 107.411 s again; the pointer went once round and stopped on the start mark (0°).

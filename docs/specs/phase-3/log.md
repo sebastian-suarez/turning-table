@@ -124,3 +124,17 @@ Verification runs and review rounds, without model names; the models that served
 - 2026-10-27: W1 pass. Boot: `DEFAULTS`, `CFG 409600 3276800 50 3 36 3000 10 35 60`. `STATUS Idle 2 409600 36 0
   Idle 0 0 -`; `STEP 512` → `DONE 512` (1.204 s from `OK`), `STEP -512` → `DONE 0`, `NEXT` → `DONE 114`; then
   `STATUS ... 36 1 Idle 0 0 -`.
+- 2026-10-27: bench note: after the move to A2 the start/stop button did not respond at first; its GND wire sat in
+  a dead hole of the second breadboard's − rail. Moved to the next hole, it works. (This cannot explain the A0
+  fault, which read closed with nothing connected; A0 stays unused.)
+- 2026-10-27: W2 pass, one round of three runs instead of six. Arm motor on the platter's driver, `STEP 40760`
+  per run, end minus start: −19° (7 → 348), −17° (0 → 343), −17° (0 → 343). A 63.68:1 gearbox would read about
+  +0.2°, a 64:1 one −17.6°: the arm motor is 64:1, so the default `ARATIO 3276800` (409600 × 8) is right and
+  nothing was set. The first run's extra −2° is most likely backlash taken up during the run.
+- 2026-10-27: W3 first attempt failed on wiring. Pointer after `HOME` 0°, after `ARM 50` 197°, after `ARM 5` 198°,
+  after `ARM 50` again 27° (expected 0° each time): the arm motor did not follow its steps on the arm driver, while
+  the same motor ran exactly on the platter driver in W2. The firmware mapping matches the pin table (IN1..IN4 on
+  PD6, PD7, PB0, PB2). The arm driver's IN4 was not on D10; the user moved it to D10.
+- 2026-10-27: W3 pass (IN4 on D10). `HOME` with the home switch pressed by hand during the search → `ADONE 455`;
+  then `ARM 50`, `ARM 5`, `ARM 50`: the pointer read 5° after homing and after each of the three moves (one motor
+  revolution per move at `ARATIO 3276800`), within the ±0.5° reading; no backlash visible on the reversals.

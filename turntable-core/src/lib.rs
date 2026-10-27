@@ -1,4 +1,4 @@
-//! Pure Phase 2 logic shared by the AVR firmware and its host acceptance tests.
+//! Pure motion and scan logic shared by the AVR firmware and its host acceptance tests.
 //!
 //! There is no heap, floating point or hardware dependency here. In particular,
 //! the expensive fixed-point divisions belong to [`Planner`], called by main;
@@ -14,17 +14,28 @@ use core::ops::DerefMut;
 pub mod command;
 pub mod controller;
 pub mod decimal;
+pub mod homing;
+pub mod input;
 pub mod line;
 pub mod planner;
 pub mod rx;
+pub mod scan;
 pub mod sequencer;
+pub mod settings;
 
 pub use command::Command;
 pub use controller::{Controller, Output, Snapshot, State};
+pub use homing::{Homing, HomingStep};
+pub use input::{admit, button_action, Activity, ButtonAction, Debouncer};
 pub use line::LineAssembler;
 pub use planner::{Planner, PreparedCommand, RATIO_X100};
 pub use rx::{RxBuffer, RxItem};
+pub use scan::{Scan, ScanMove};
 pub use sequencer::{Direction, Sequencer};
+pub use settings::{
+    load, save_plan, Loaded, Rings, SavePlan, ScanSettings, Settings, ARM_MAX_TENTHS, MAX_PHOTOS,
+    MAX_RINGS, SETTINGS_BYTES,
+};
 
 /// These terse names are also the complete protocol error vocabulary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -33,6 +44,8 @@ pub enum Error {
     Range,
     Syntax,
     Line,
+    Home,
+    Save,
 }
 
 impl Error {
@@ -42,6 +55,8 @@ impl Error {
             Self::Range => "RANGE",
             Self::Syntax => "SYNTAX",
             Self::Line => "LINE",
+            Self::Home => "HOME",
+            Self::Save => "SAVE",
         }
     }
 }
@@ -56,9 +71,8 @@ impl Error {
 /// comparisons and copies happen here: parse and prepare before, print after.
 ///
 /// `motion` borrows the controller and runs only once the generation matched,
-/// so a stale command never touches it. Firmware passes its RefCell borrow;
-/// borrowing up front instead would put that borrow check ahead of the
-/// generation comparison, which lengthens the AVR critical section.
+/// so a stale command never touches it. Firmware scopes the mutable reference
+/// to its interrupt mutex; no reference into ISR-owned state escapes it.
 ///
 /// `None` means the RX queue lost bytes after this command's line was dequeued.
 /// Nothing is applied or committed, and the stale command gets no reply: the

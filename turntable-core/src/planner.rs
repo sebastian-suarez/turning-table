@@ -55,6 +55,11 @@ impl Planner {
         })
     }
 
+    /// Calibration changes the scale; STOPS and SCAN own grid rebasing.
+    pub fn set_ratio(&mut self, ratio_x100: u32) {
+        self.ratio_x100 = ratio_x100;
+    }
+
     pub const fn ratio_x100(&self) -> u32 {
         self.ratio_x100
     }
@@ -79,8 +84,8 @@ impl Planner {
         if !(-ROT_LIMIT_TENTHS..=ROT_LIMIT_TENTHS).contains(&tenths) {
             return None;
         }
-        let numerator = i64::from(tenths) * i64::from(self.ratio_x100);
-        i32::try_from(round_half_away(numerator, 360_000)).ok()
+        // Even 36000 * u32::MAX / 360000 fits i32 after rounding.
+        Some(angle_position(tenths, self.ratio_x100))
     }
 
     /// Absolute ideal target relative to the planner origin. k never wraps
@@ -90,7 +95,7 @@ impl Planner {
         // Two u32 magnitudes always fit a u64 product. Reject its sign bit
         // before interpreting it as the required signed i64 intermediate.
         // This checks overflow without AVR's bulky generic mul-overflow helper.
-        let product = u64::from(k) * u64::from(self.ratio_x100);
+        let product = wide_product(k, self.ratio_x100);
         let numerator = i64::try_from(product).ok()?;
         Some(round_half_away(numerator, u32::from(self.stops) * 100))
     }
@@ -143,6 +148,9 @@ impl Planner {
             }
             Command::Pos => PreparedCommand::Pos,
             Command::Status => PreparedCommand::Status,
+            // The arm's absolute target and the Phase 3 admission table are
+            // handled by main. Phase 2 preparation remains platter-only.
+            _ => return Err(Error::Syntax),
         };
         if let PreparedCommand::Move(steps) | PreparedCommand::Next { steps, .. } = prepared {
             Controller::checked_destination(motion.position, steps)?;
@@ -175,6 +183,35 @@ impl Planner {
 /// Dividing a signed i64 with Rust's generic AVR runtime would pull in several
 /// KiB of helpers, exceeding the whole firmware's 8 KiB budget. Binary long
 /// division below is the same exact integer operation using shifts/subtractions.
+/// Four 16-bit partial products give an exact 32x32 -> 64 product without
+/// pulling AVR's generic 64x64 multiply into flash. Each carry sum fits u32.
+#[inline(never)]
+fn wide_product(a: u32, b: u32) -> u64 {
+    let (a0, a1) = (a & 0xffff, a >> 16);
+    let (b0, b1) = (b & 0xffff, b >> 16);
+    let low = a0 * b0;
+    let middle = a1 * b0 + (low >> 16);
+    let upper = middle >> 16;
+    let middle = a0 * b1 + (middle & 0xffff);
+    let high = a1 * b1 + upper + (middle >> 16);
+    (u64::from(high) << 32) | u64::from((middle << 16) | (low & 0xffff))
+}
+
+/// Bounded degree conversion shared by both planners, homing and ring targets.
+/// Callers limit tenths to +/-36000; the rounded result fits i32 at any u32 ratio.
+#[inline(never)]
+pub(crate) fn angle_position(tenths: i32, ratio: u32) -> i32 {
+    let magnitude = wide_product(tenths.unsigned_abs(), ratio) as i64;
+    // Rounding is sign-symmetric. Negate the bounded i32 result instead of
+    // eight numerator bytes, which is smaller on AVR.
+    let rounded = round_half_away(magnitude, 360_000) as i32;
+    if tenths < 0 {
+        -rounded
+    } else {
+        rounded
+    }
+}
+
 /// It runs only in main with interrupts enabled, never in the timer ISR.
 pub(crate) fn round_half_away(numerator: i64, denominator: u32) -> i64 {
     let negative = numerator < 0;

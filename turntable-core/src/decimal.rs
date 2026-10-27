@@ -34,7 +34,7 @@ impl Decimal {
         }
         let mut remaining = self.magnitude;
         let mut started = false;
-        for divisor in [
+        const DIVISORS: [u32; 10] = [
             1_000_000_000,
             100_000_000,
             10_000_000,
@@ -45,7 +45,8 @@ impl Decimal {
             100,
             10,
             1,
-        ] {
+        ];
+        for &divisor in &DIVISORS {
             let mut digit = 0;
             while remaining >= divisor {
                 remaining -= divisor;

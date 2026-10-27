@@ -1,104 +1,168 @@
-//! Phase 2: interrupt-driven stepper motion and a line-oriented serial console.
-//!
-//! The ATmega328PB Nano runs the ATmega328P instruction/peripheral subset. Keep
-//! that target: the installed avr-gcc 9 cannot link a native 328PB executable.
-//! D2..D5 are signals only; motor power comes from external 5 V, common ground.
+//! Two interrupt-driven steppers; main owns planning, EEPROM and console TX.
+//! The Nano's 328PB executes the pinned ATmega328P instruction/peripheral subset.
 
 #![no_std]
 #![no_main]
 #![feature(abi_avr_interrupt)]
+#![feature(asm_experimental_arch)]
 
 use arduino_hal::{pac, prelude::*};
-use avr_device::interrupt::{self, Mutex};
-use core::cell::{Cell, RefCell};
+use avr_device::interrupt::{self, CriticalSection, Mutex};
+use core::cell::{Cell, UnsafeCell};
 use panic_halt as _;
+use turntable_core::homing::{BUTTON_DEBOUNCE_TICKS, SWITCH_DEBOUNCE_TICKS};
 use turntable_core::{
-    accept, Command, Controller, Error, LineAssembler, Planner, PreparedCommand, RxBuffer, State,
-    RATIO_X100,
+    accept, admit, button_action, Activity, ButtonAction, Command, Controller, Debouncer, Error,
+    Homing, HomingStep, LineAssembler, Planner, PreparedCommand, RxBuffer, Scan, ScanMove,
+    Settings, Snapshot, State, ARM_MAX_TENTHS,
 };
 
 mod console_format;
-use console_format::{ConsoleWriter, Number};
+mod eeprom;
+mod memory;
+use console_format::{newline, signed_field, unsigned_field, ConsoleWriter};
 
-// RefCell gives temporary mutable access under the interrupt mutex. On AVR an
-// i32 position takes four separate byte reads; Cell/RefCell alone would not make
-// those reads atomic. Every access from main *and* either ISR uses this mutex.
-static MOTION: Mutex<RefCell<Controller>> = Mutex::new(RefCell::new(Controller::new()));
-static RX: Mutex<RefCell<RxBuffer>> = Mutex::new(RefCell::new(RxBuffer::new()));
+// Every shared word is protected, even in an ISR. An AVR i32 takes four byte
+// accesses; Cell alone cannot make a position/mailbox atomic against the timer.
+static MOTION: Mutex<UnsafeCell<Controller>> = Mutex::new(UnsafeCell::new(Controller::new()));
+static ARM: Mutex<UnsafeCell<Controller>> = Mutex::new(UnsafeCell::new(Controller::new()));
+static RX: Mutex<UnsafeCell<RxBuffer>> = Mutex::new(UnsafeCell::new(RxBuffer::new()));
 static DONE: Mutex<Cell<Option<i32>>> = Mutex::new(Cell::new(None));
+static ADONE: Mutex<Cell<Option<i32>>> = Mutex::new(Cell::new(None));
+static INPUT: Mutex<Cell<Inputs>> = Mutex::new(Cell::new(Inputs {
+    home: Debouncer::new(SWITCH_DEBOUNCE_TICKS),
+    button: Debouncer::new(BUTTON_DEBOUNCE_TICKS),
+    presses: 0,
+    armed: false,
+    halted: false,
+    ticks: 0,
+}));
 
-/// Map the core's IN1..IN4 notation (bits 3..0) to the wiring PD2..PD5.
-/// Preserve PD0/PD1 (USART) and PD6/PD7: writing an entire raw nibble to PORTD
-/// would otherwise affect unrelated pins. This function is called only before
-/// enabling interrupts or from the timer ISR, so its read/modify/write cannot
-/// race another PORTD writer. No main-loop GPIO code writes these four pins.
-fn write_coils(pattern: u8) {
-    let bits = ((pattern & 0b1000) >> 1)
-        | ((pattern & 0b0100) << 1)
-        | ((pattern & 0b0010) << 3)
-        | ((pattern & 0b0001) << 5);
-    // SAFETY: the PAC register block contains volatile, interior-mutable
-    // registers. We only touch the motor output bits under the ownership rule
-    // above; the pin tokens are retained in main and never used as writers.
-    let port = unsafe { &*pac::PORTD::ptr() };
-    port.portd()
-        .modify(|r, w| unsafe { w.bits((r.bits() & !0b0011_1100) | bits) });
+#[derive(Clone, Copy)]
+struct Inputs {
+    home: Debouncer,
+    button: Debouncer,
+    presses: u8,
+    armed: bool,
+    halted: bool,
+    ticks: u32,
+}
+
+/// Scope each motor borrow to one interrupt lock, without a runtime counter.
+fn with_motor<T>(
+    motor: &Mutex<UnsafeCell<Controller>>,
+    cs: CriticalSection,
+    f: impl FnOnce(&mut Controller) -> T,
+) -> T {
+    // SAFETY: all callers hold the mutex and never re-enter this helper for
+    // the same motor. The timer nests ARM then MOTION, which are distinct.
+    // No borrowed reference escapes the closure, and ISRs never enable nesting.
+    unsafe { f(&mut *motor.borrow(cs).get()) }
+}
+
+/// RX has one scoped access per interrupt lock, with no nested RX access.
+/// Avoid a second runtime borrow counter in the latency-sensitive transaction.
+fn with_rx<T>(cs: CriticalSection, f: impl FnOnce(&mut RxBuffer) -> T) -> T {
+    // SAFETY: every caller holds the interrupt mutex. The closures below never
+    // re-enter with_rx; their borrowed reference cannot escape in T. Neither
+    // ISR enables nesting, so no other mutable reference can coexist with this.
+    unsafe { f(&mut *RX.borrow(cs).get()) }
+}
+
+// Copying this small value under the mutex needs no run-time borrow counter.
+// LLVM keeps only the fields a closure actually reads or changes.
+fn inputs<T>(cs: CriticalSection, f: impl FnOnce(&mut Inputs) -> T) -> T {
+    let mut input = INPUT.borrow(cs).get();
+    let result = f(&mut input);
+    INPUT.borrow(cs).set(input);
+    result
+}
+
+/// Only this ISR (or boot before SEI) writes PORTD/PORTB. Preserve USART,
+/// D9/OC1A and the spare pins; PB5's LED shares PORTB with arm IN3/IN4.
+fn write_coils(platter: u8, arm: u8, active: bool) {
+    let pd = ((platter & 8) >> 1)
+        | ((platter & 4) << 1)
+        | ((platter & 2) << 3)
+        | ((platter & 1) << 5)
+        | ((arm & 8) << 3)
+        | ((arm & 4) << 5);
+    let pb = ((arm & 2) >> 1) | ((arm & 1) << 2) | (u8::from(active) << 5);
+    // SAFETY: volatile register access under the single-writer rule above.
+    unsafe {
+        (*pac::PORTD::ptr())
+            .portd()
+            .modify(|r, w| w.bits((r.bits() & 3) | pd));
+        (*pac::PORTB::ptr())
+            .portb()
+            .modify(|r, w| w.bits((r.bits() & !0x25) | pb));
+    }
+}
+
+fn switch_closed() -> bool {
+    // SAFETY: reading PINC has no side effects. The pull-up makes closed low.
+    unsafe { (*pac::PORTC::ptr()).pinc().read().bits() & 2 == 0 }
 }
 
 #[avr_device::interrupt(atmega328p)]
 fn USART_RX() {
-    // SAFETY: the HAL transmitter owns only the TX path after split(). This
-    // ISR is the sole RX reader. UDR0 has separate RX/TX hardware buffers, so
-    // reading here does not consume or overwrite a byte being transmitted.
+    // Status must precede UDR: reading UDR advances the hardware receive FIFO.
+    // DOR marks a gap before an intact byte; FE/UPE corrupt the byte itself.
     let usart = unsafe { &*pac::USART0::ptr() };
-    // DOR0 means frames were lost BEFORE this byte; the byte itself is intact
-    // unless FE0 (bad stop bit) or UPE0 (bad parity) also marks it corrupt.
-    // Read status FIRST: reading UDR0 advances the FIFO and its error bits.
-    // Do not use the HAL reader here: it discards this error information.
     let status = usart.ucsr0a().read();
     let byte = usart.udr0().read().bits();
-    let overrun = status.dor0().bit_is_set();
-    let corrupt_frame = status.fe0().bit_is_set() || status.upe0().bit_is_set();
-    // Worst case: flush queue indices, increment the u32 loss generation, and
-    // enqueue one byte. No loop, buffer copy, formatting or UART write.
-    // Release bound: 83 cycles = 5.1875 us at 16 MHz (verification report).
     interrupt::free(|cs| {
-        RX.borrow(cs)
-            .borrow_mut()
-            .receive(byte, overrun, corrupt_frame)
+        with_rx(cs, |rx| {
+            rx.receive(
+                byte,
+                status.dor0().bit_is_set(),
+                status.fe0().bit_is_set() || status.upe0().bit_is_set(),
+            )
+        });
     });
-    // Never print in an ISR. The 32-byte queue gives main time for ufmt's
-    // blocking TX; overflow is sticky and rejects input instead of changing it.
 }
 
 #[avr_device::interrupt(atmega328p)]
 fn TIMER2_COMPA() {
-    // Worst case: one tick's small counters, i32 step and table lookup, a
-    // position-bearing DONE mailbox write, and a one-bit activity snapshot.
-    // Release bound: 135 cycles = 8.4375 us; full ISR body is 16.0625 us.
-    let (output, active) = interrupt::free(|cs| {
-        let mut motion = MOTION.borrow(cs).borrow_mut();
-        let output = motion.tick();
-        if let Some(position) = output.done {
-            // There can be only one in-flight move. main detaches an old event
-            // atomically before it accepts a new move, so this cannot overwrite
-            // an unreported completion. Retain the *completed* position.
-            DONE.borrow(cs).set(Some(position));
-        }
-        (output, motion.snapshot().state != State::Idle)
+    interrupt::free(|cs| {
+        with_motor(&ARM, cs, |arm| {
+            with_motor(&MOTION, cs, |platter| {
+                let pins = unsafe { (*pac::PORTC::ptr()).pinc().read().bits() };
+                let mut input = INPUT.borrow(cs).get();
+                input.ticks = input.ticks.wrapping_add(1);
+                if input.button.sample(pins & 1 == 0) {
+                    input.presses = input.presses.saturating_add(1);
+                }
+                input.home.sample(pins & 2 == 0);
+                // Sample BEFORE ticking: the threshold tick cannot emit another step.
+                // Disarming makes a held switch a single halt, without restarting hold.
+                // A closure after the travel ran out (Hold/Settle) cannot home.
+                if input.armed
+                    && input.home.closed()
+                    && matches!(arm.snapshot().state, State::Energise | State::Stepping)
+                {
+                    arm.halt();
+                    input.armed = false;
+                    input.halted = true;
+                }
+                INPUT.borrow(cs).set(input);
+                let p = platter.tick();
+                let a = arm.tick();
+                if let Some(position) = p.done {
+                    DONE.borrow(cs).set(Some(position));
+                }
+                if let Some(position) = a.done {
+                    ADONE.borrow(cs).set(Some(position));
+                }
+                write_coils(
+                    p.pattern,
+                    a.pattern,
+                    platter.snapshot().state != State::Idle || arm.snapshot().state != State::Idle,
+                );
+            })
+        })
     });
-    write_coils(output.pattern);
-    // PB0/PB2 will be the arm coils. Keep PB5's read/modify/write in this ISR
-    // too: main must never restore an old PORTB value over a newer coil write.
-    // The retained D13 pin token only configures direction before interrupts.
-    // SAFETY: this ISR is the only PORTB writer after interrupts are enabled.
-    let port = unsafe { &*pac::PORTB::ptr() };
-    port.portb()
-        .modify(|r, w| unsafe { w.bits((r.bits() & !(1 << 5)) | (u8::from(active) << 5)) });
-    // Controller::tick contains only counters, i32 +/-1 and table lookup.
-    // Degree/stop i64 multiplication/division is exclusively in main.
 }
-
 fn configure_timer(timer: pac::TC2) {
     // Timer2 has its own prescaler, including /128 (Timer0/1's choices differ).
     // Stop the clock while programming it, select CTC (clear on compare A),
@@ -117,101 +181,432 @@ fn configure_timer(timer: pac::TC2) {
     // TC0 remains available for later timing; TC1 remains free for servo PWM.
 }
 
-fn print_done<W: ufmt::uWrite>(serial: &mut W, position: i32) {
-    // Deliberately ignore only a transport write error. The actual HAL writer
-    // is Infallible; generic helpers avoid spelling its board-specific type.
-    let _ = ufmt::uwriteln!(serial, "DONE {}\r", Number::signed(position));
+fn print_done<W: ufmt::uWrite>(serial: &mut W, position: i32, arm: bool) {
+    let _ = ufmt::uwrite!(serial, "{}DONE", if arm { "A" } else { "" });
+    signed_field(serial, position);
+    newline(serial);
 }
 
 fn print_error<W: ufmt::uWrite>(serial: &mut W, error: Error) {
     let _ = ufmt::uwriteln!(serial, "ERR {}\r", error.as_str());
 }
 
-// Keep parser locals out of the planner/acceptance stack frame. On an 8-bit
-// AVR, inlining both paths spills many registers and costs flash as well as
-// instructions inside the critical section.
+fn ok<W: ufmt::uWrite>(serial: &mut W) {
+    let _ = ufmt::uwriteln!(serial, "OK\r");
+}
+
+fn cfg<W: ufmt::uWrite>(serial: &mut W, s: &Settings) {
+    let _ = ufmt::uwrite!(serial, "CFG");
+    unsigned_field(serial, s.pratio_x100);
+    unsigned_field(serial, s.aratio_x100);
+    unsigned_field(serial, s.ahome_tenths as u32);
+    unsigned_field(serial, u32::from(s.scan.rings));
+    unsigned_field(serial, u32::from(s.scan.photos));
+    unsigned_field(serial, u32::from(s.scan.interval_ms));
+    for &height in &s.rings.heights[..usize::from(s.rings.len)] {
+        unsigned_field(serial, u32::from(height));
+    }
+    newline(serial);
+}
+
+fn snapshots() -> (Snapshot, Snapshot) {
+    interrupt::free(|cs| {
+        (
+            with_motor(&MOTION, cs, |m| m.snapshot()),
+            with_motor(&ARM, cs, |m| m.snapshot()),
+        )
+    })
+}
+
+/// Both scan channels use the same short start transaction. All geometry is
+/// already checked in main; the controller still validates its destination.
+#[inline(never)]
+fn scan_start(arm: bool, steps: i32, period: u8) -> Result<(), Error> {
+    interrupt::free(|cs| {
+        let motor = if arm { &ARM } else { &MOTION };
+        with_motor(motor, cs, |m| {
+            m.start_with_period(steps, period).map(|_| ())
+        })
+    })
+}
+
+/// Main-only state is deliberately outside the mutex. No ISR plans geometry,
+/// prints, or copies a scan/settings object with interrupts masked.
+struct Run {
+    settings: Settings,
+    platter: Planner,
+    arm: Planner,
+    scan: Option<Scan>,
+    homing: Option<Homing>,
+    homed: bool,
+    stopping: bool,
+    turning: bool,
+    completed: u8,
+}
+
+impl Run {
+    fn activity(&self, p: &Snapshot, a: &Snapshot) -> Activity {
+        Activity {
+            platter_idle: p.state == State::Idle,
+            arm_idle: a.state == State::Idle,
+            scanning: self.scan.is_some(),
+            homing: self.homing.is_some(),
+            homed: self.homed,
+        }
+    }
+
+    fn home_step<W: ufmt::uWrite>(&mut self, serial: &mut W, step: HomingStep) {
+        match step {
+            HomingStep::Move {
+                steps,
+                period_ms,
+                halt_on_switch,
+            } => {
+                let result = interrupt::free(|cs| {
+                    let mut input = INPUT.borrow(cs).get();
+                    // Search samples must be consecutive AFTER arming, not a
+                    // stale debounced level retained from the backoff move.
+                    input.home = Debouncer::new(SWITCH_DEBOUNCE_TICKS);
+                    input.armed = halt_on_switch;
+                    input.halted = false;
+                    INPUT.borrow(cs).set(input);
+                    with_motor(&ARM, cs, |m| m.start_with_period(steps, period_ms))
+                });
+                if result.is_err() {
+                    self.home_step(serial, HomingStep::Failed);
+                }
+            }
+            HomingStep::Homed(position) => {
+                let _ = interrupt::free(|cs| with_motor(&ARM, cs, |m| m.set_position(position)));
+                self.homed = true;
+                self.homing = None;
+                print_done(serial, position, true);
+            }
+            HomingStep::Failed => {
+                interrupt::free(|cs| inputs(cs, |input| input.armed = false));
+                self.homed = false;
+                self.homing = None;
+                print_error(serial, Error::Home);
+            }
+        }
+    }
+
+    /// Drain completion before admitting another move on the same motor.
+    /// Homing owns its arm event (the backoff is silent); scans expose both.
+    #[inline(never)]
+    fn service<W: ufmt::uWrite>(&mut self, serial: &mut W) {
+        let p = interrupt::free(|cs| DONE.borrow(cs).take());
+        let a = interrupt::free(|cs| ADONE.borrow(cs).take());
+        if let Some(position) = p {
+            print_done(serial, position, false);
+            if self.turning {
+                self.turning = false;
+                if !self.stopping {
+                    self.completed += 1;
+                }
+            }
+        }
+        if let Some(position) = a {
+            if let Some(homing) = &mut self.homing {
+                let halted = interrupt::free(|cs| INPUT.borrow(cs).get().halted);
+                let step = homing.done(switch_closed(), halted);
+                self.home_step(serial, step);
+            } else {
+                print_done(serial, position, true);
+            }
+        }
+        let (p, a) = snapshots();
+        if p.state != State::Idle || a.state != State::Idle {
+            return;
+        }
+        if self.scan.is_some() {
+            let next = if self.stopping {
+                None
+            } else {
+                self.scan.as_mut().and_then(Iterator::next)
+            };
+            let result = match next {
+                Some(ScanMove::Arm(steps)) => scan_start(true, steps, a.period_ms),
+                Some(ScanMove::Turn) => {
+                    let period = self.scan.as_ref().unwrap().turn_period_ms();
+                    // NEXT keeps fractional revolution remainders across rings.
+                    let prepared = self.platter.prepare(Command::Next, p);
+                    prepared.and_then(|prepared| {
+                        let steps = match prepared {
+                            PreparedCommand::Next { steps, .. } => steps,
+                            _ => unreachable!(),
+                        };
+                        scan_start(false, steps, period)?;
+                        self.platter.commit(prepared);
+                        self.turning = true;
+                        Ok(())
+                    })
+                }
+                None => {
+                    self.scan = None;
+                    let _ = ufmt::uwrite!(serial, "END");
+                    unsigned_field(serial, u32::from(self.completed));
+                    newline(serial);
+                    Ok(())
+                }
+            };
+            if let Err(error) = result {
+                print_error(serial, error);
+                self.stopping = true;
+            }
+        }
+    }
+}
+
+/// This is the acceptance boundary for main-only commands. Once accepted,
+/// EEPROM/TX may take time and a later RX loss affects only later commands.
+/// Motor/planner transactions still use accept() under the same RX mutex.
+#[inline(never)]
+fn current(generation: Option<u32>) -> bool {
+    interrupt::free(|cs| {
+        generation.is_none_or(|generation| {
+            with_rx(cs, |rx| rx.accept_if_current(generation, || ()).is_some())
+        })
+    })
+}
+
+#[inline(never)]
+fn start_scan<W: ufmt::uWrite>(
+    serial: &mut W,
+    run: &mut Run,
+    arguments: Option<turntable_core::ScanSettings>,
+    p: &Snapshot,
+    a: &Snapshot,
+    generation: Option<u32>,
+) -> Result<(), Error> {
+    let settings = arguments.unwrap_or(run.settings.scan);
+    let scan = Scan::new(&run.settings, settings, p.period_ms, a.position);
+    if !current(generation) {
+        return Ok(());
+    }
+    let scan = scan?;
+    run.settings.scan = settings;
+    if arguments.is_some() {
+        eeprom::save(&run.settings)?;
+    }
+    run.scan = Some(scan);
+    run.completed = 0;
+    run.turning = false;
+    run.stopping = false;
+    run.platter.commit(PreparedCommand::Stops {
+        stops: 1,
+        origin: p.position,
+    });
+    ok(serial);
+    Ok(())
+}
+
+#[inline(never)]
+fn prepare_arm(run: &Run, tenths: i16, position: i32) -> Result<PreparedCommand, Error> {
+    if !(run.settings.ahome_tenths..=ARM_MAX_TENTHS).contains(&tenths) {
+        return Err(Error::Range);
+    }
+    run.arm
+        .degrees_to_halfsteps(i32::from(tenths))
+        .and_then(|target| target.checked_sub(position))
+        .ok_or(Error::Range)
+        .map(PreparedCommand::Move)
+}
+
+#[inline(never)]
+fn platter_command<W: ufmt::uWrite>(
+    serial: &mut W,
+    run: &mut Run,
+    prepared: Result<PreparedCommand, Error>,
+    query_position: bool,
+    generation: u32,
+    arm: bool,
+) -> Result<(), Error> {
+    // A completion may have arrived during preparation. Detach it atomically
+    // with acceptance so the new move cannot overwrite its predecessor's event.
+    // Resolve the channel before masking. black_box prevents LTO from
+    // expanding every pointer access back into two static-channel branches;
+    // those repeated branches otherwise exceed the 20 us transaction budget.
+    let selected = if arm {
+        (&ARM, &ADONE, &mut run.arm)
+    } else {
+        (&MOTION, &DONE, &mut run.platter)
+    };
+    let (motion, mailbox, planner) = core::hint::black_box(selected);
+    let (previous, accepted) = interrupt::free(|cs| {
+        let previous = mailbox.borrow(cs).take();
+        let accepted = with_rx(cs, |rx| {
+            with_motor(motion, cs, |m| {
+                accept(rx, || &mut *m, planner, generation, prepared)
+            })
+        });
+        (previous, accepted)
+    });
+    if let Some(position) = previous {
+        print_done(serial, position, arm);
+    }
+    if let Some((result, _)) = accepted {
+        let output = result?;
+        if query_position {
+            let _ = ufmt::uwrite!(serial, "POS");
+            let position = interrupt::free(|cs| with_motor(&MOTION, cs, |m| m.snapshot()).position);
+            signed_field(serial, position);
+            unsigned_field(serial, run.platter.k());
+            newline(serial);
+        } else {
+            ok(serial);
+        }
+        if let Some(position) = output.done {
+            print_done(serial, position, arm);
+        }
+    }
+    Ok(())
+}
+
+#[inline(never)]
+fn status<W: ufmt::uWrite>(serial: &mut W, run: &Run, p: &Snapshot, a: &Snapshot) {
+    let _ = ufmt::uwrite!(serial, "STATUS {}", p.state.as_str());
+    unsigned_field(serial, u32::from(p.period_ms));
+    unsigned_field(serial, run.platter.ratio_x100());
+    unsigned_field(serial, u32::from(run.platter.stops()));
+    unsigned_field(serial, run.platter.k());
+    let _ = ufmt::uwrite!(serial, " {}", a.state.as_str());
+    signed_field(serial, a.position);
+    unsigned_field(serial, u32::from(run.homed));
+    if run.scan.is_some() {
+        unsigned_field(serial, u32::from(run.completed + 1));
+    } else {
+        let _ = ufmt::uwrite!(serial, " -");
+    }
+    newline(serial);
+}
+
+#[inline(never)]
+fn execute<W: ufmt::uWrite>(
+    serial: &mut W,
+    run: &mut Run,
+    command: Command,
+    p: &Snapshot,
+    a: &Snapshot,
+    generation: Option<u32>,
+) -> Result<(), Error> {
+    match command {
+        Command::Scan(arguments) => return start_scan(serial, run, arguments, p, a, generation),
+        Command::Arm(tenths) => {
+            let prepared = prepare_arm(run, tenths, a.position);
+            return platter_command(serial, run, prepared, false, generation.unwrap(), true);
+        }
+        Command::Step(_)
+        | Command::Rot(_)
+        | Command::Stops(_)
+        | Command::Next
+        | Command::Zero
+        | Command::Pos => {
+            let prepared = run.platter.prepare(command, *p);
+            return platter_command(
+                serial,
+                run,
+                prepared,
+                command == Command::Pos,
+                generation.unwrap(),
+                false,
+            );
+        }
+        Command::Home => {
+            let (homing, step) = Homing::start(switch_closed(), &run.settings);
+            if !current(generation) {
+                return Ok(());
+            }
+            run.homed = false;
+            run.homing = Some(homing);
+            ok(serial);
+            run.home_step(serial, step);
+            return Ok(());
+        }
+        _ => {}
+    }
+    if !current(generation) {
+        return Ok(());
+    }
+    match command {
+        Command::Stop => {
+            // A completed turn counts even if its mailbox arrived while main
+            // parsed STOP. A genuinely halted turn must never increment END.
+            let idle = interrupt::free(|cs| {
+                let idle = with_motor(&MOTION, cs, |m| {
+                    let idle = m.snapshot().state == State::Idle;
+                    m.halt();
+                    idle
+                });
+                with_motor(&ARM, cs, Controller::halt);
+                inputs(cs, |input| input.armed = false);
+                idle
+            });
+            if run.turning && idle {
+                run.completed += 1;
+                run.turning = false;
+            }
+            if let Some(homing) = &mut run.homing {
+                homing.stop();
+            }
+            run.stopping = true;
+        }
+        Command::Speed(period) => {
+            interrupt::free(|cs| {
+                with_motor(&MOTION, cs, |m| m.apply(PreparedCommand::Speed(period)))?;
+                with_motor(&ARM, cs, |m| m.apply(PreparedCommand::Speed(period)))?;
+                Ok(())
+            })?;
+        }
+        Command::Cfg => {
+            cfg(serial, &run.settings);
+            return Ok(());
+        }
+        Command::Status => {
+            status(serial, run, p, a);
+            return Ok(());
+        }
+        _ => {
+            match command {
+                Command::Rings(rings) => run.settings.rings = rings,
+                Command::PRatio(ratio) => {
+                    run.settings.pratio_x100 = ratio;
+                    run.platter.set_ratio(ratio);
+                }
+                Command::ARatio(ratio) => {
+                    run.settings.aratio_x100 = ratio;
+                    run.arm.set_ratio(ratio);
+                    run.homed = false;
+                }
+                Command::AHome(home) => {
+                    run.settings.ahome_tenths = home;
+                    run.homed = false;
+                }
+                _ => return Err(Error::Syntax),
+            }
+            eeprom::save(&run.settings)?;
+        }
+    }
+    ok(serial);
+    Ok(())
+}
+
 #[inline(never)]
 fn dispatch<W: ufmt::uWrite>(
     serial: &mut W,
-    planner: &mut Planner,
+    run: &mut Run,
     command: Result<Command, Error>,
-    generation: u32,
+    generation: Option<u32>,
 ) {
-    // Worst case: copy state, i32 position and the next-move period (6 bytes).
-    // Release bound: 21 cycles = 1.3125 us at 16 MHz.
-    let snapshot = interrupt::free(|cs| MOTION.borrow(cs).borrow().snapshot());
-    // This is intentionally OUTSIDE every critical section. AVR's software
-    // i64 division takes many instructions; masking RX for that long can lose
-    // bytes at 57600 baud (one incoming byte about every 174 microseconds).
-    let prepared = command.and_then(|command| planner.prepare(command, snapshot));
-    // Worst case: detach DONE, compare one u32 generation, apply one prepared
-    // command (bounded i32 checks/updates), commit k/origin/stops and copy the
-    // 6-byte motion snapshot. No parsing, i64 arithmetic, formatting or TX.
-    // Release bound: 293 cycles = 18.3125 us, below the 20 us target.
-    let (previous_done, accepted) = interrupt::free(|cs| {
-        // Check/apply and event detachment are one transaction. The ISR may
-        // have completed between the earlier snapshot and this lock. Idle is
-        // still available; a pending event must not produce an extra BUSY.
-        let previous_done = DONE.borrow(cs).take();
-        // Generation check, controller apply, planner commit and snapshot,
-        // shared with the host tests. MOTION is borrowed only if the
-        // generation still matches; both borrows end inside this section.
-        let accepted = accept(
-            &RX.borrow(cs).borrow(),
-            || MOTION.borrow(cs).borrow_mut(),
-            planner,
-            generation,
-            prepared,
-        );
-        (previous_done, accepted)
-    });
-    if let Some(position) = previous_done {
-        print_done(serial, position);
-    }
-    // The queued loss notice will print exactly one ERR LINE for this flush.
-    // Printing another error here would count the same loss twice.
-    let Some((result, snapshot)) = accepted else {
-        return;
+    let (p, a) = snapshots();
+    let command = command.and_then(|c| admit(&c, run.activity(&p, &a)).map(|_| c));
+    let result = match command {
+        Ok(command) => execute(serial, run, command, &p, &a, generation),
+        Err(error) if current(generation) => Err(error),
+        Err(_) => Ok(()),
     };
-    let output = match result {
-        Ok(output) => output,
-        Err(error) => {
-            print_error(serial, error);
-            return;
-        }
-    };
-    // Everything below uses local snapshots/main-only planner words. Blocking
-    // POS/STATUS/DONE formatting and UART TX always leave interrupts enabled.
-    // Use the prepared tag for replies too, so the original parser result need
-    // not survive the planner's arithmetic in AVR's limited register set.
-    match prepared {
-        Ok(PreparedCommand::Pos) => {
-            let _ = ufmt::uwriteln!(
-                serial,
-                "POS {} {}\r",
-                Number::signed(snapshot.position),
-                Number::unsigned(planner.k())
-            );
-        }
-        Ok(PreparedCommand::Status) => {
-            let _ = ufmt::uwriteln!(
-                serial,
-                "STATUS {} {} {} {} {}\r",
-                snapshot.state.as_str(),
-                Number::unsigned(u32::from(snapshot.period_ms)),
-                Number::unsigned(planner.ratio_x100()),
-                Number::unsigned(u32::from(planner.stops())),
-                Number::unsigned(planner.k())
-            );
-        }
-        _ => {
-            let _ = ufmt::uwriteln!(serial, "OK\r");
-        }
-    }
-    // Zero-distance STEP/ROT/NEXT produces its event immediately, after its OK.
-    // This value stays local so consecutive zero moves cannot overwrite it.
-    if let Some(position) = output.done {
-        print_done(serial, position);
+    if let Err(error) = result {
+        print_error(serial, error);
     }
 }
 
@@ -219,53 +614,84 @@ fn dispatch<W: ufmt::uWrite>(
 fn main() -> ! {
     let dp = arduino_hal::Peripherals::take().unwrap();
     let pins = arduino_hal::pins!(dp);
-    // The HAL sets asynchronous USART0, 8 data bits, no parity, one stop bit.
-    // RXCIE0 enables RX-complete interrupts; TX stays a blocking main-only
-    // ufmt writer. Retain the unused reader token so nobody polls RX as well.
     let mut serial = arduino_hal::default_serial!(dp, pins, 57600);
     serial.listen(arduino_hal::hal::usart::Event::RxComplete);
     let (_receiver, serial) = serial.split();
     let mut serial = ConsoleWriter(serial);
-    let _led = pins.d13.into_output();
-    let _motor_pins = (
+    let _outputs = (
         pins.d2.into_output(),
         pins.d3.into_output(),
         pins.d4.into_output(),
         pins.d5.into_output(),
+        pins.d6.into_output(),
+        pins.d7.into_output(),
+        pins.d8.into_output(),
+        pins.d10.into_output(),
+        pins.d13.into_output(),
     );
-    write_coils(0);
-    configure_timer(dp.TC2);
-
-    // The spec leaves the initial stop count open; 36 matches its closure
-    // exercise. STOPS changes this at runtime and rebases the planner origin.
-    let mut planner = Planner::new(RATIO_X100, 36).unwrap();
+    let _inputs = (pins.a0.into_pull_up_input(), pins.a1.into_pull_up_input());
+    write_coils(0, 0, false);
+    let (settings, defaults) = eeprom::boot();
+    // Keep the long-lived runner out of main's AVR stack frame. Accessing
+    // stack offsets above 63 needs extra address/SREG instructions on AVR;
+    // static storage also makes this persistent RAM visible to avr-size.
+    static mut RUN: core::mem::MaybeUninit<Run> = core::mem::MaybeUninit::uninit();
+    // SAFETY: entry runs once. This is the sole reference, retained by main;
+    // neither ISR can name/access RUN. Initialize it before enabling interrupts.
+    let run = unsafe {
+        (*core::ptr::addr_of_mut!(RUN)).write(Run {
+            platter: Planner::new(settings.pratio_x100, 36).unwrap(),
+            arm: Planner::new(settings.aratio_x100, 1).unwrap(),
+            settings,
+            scan: None,
+            homing: None,
+            homed: false,
+            stopping: false,
+            turning: false,
+            completed: 0,
+        })
+    };
     let mut assembler = LineAssembler::new();
-    // SAFETY: shared statics and peripherals are fully initialised. Neither
-    // ISR enables nested interrupts, prints, or borrows main's stack objects.
+    configure_timer(dp.TC2);
+    // SAFETY: peripherals/statics are initialized; neither ISR enables nesting.
     unsafe { interrupt::enable() };
     ufmt::uwriteln!(&mut serial, "turntable-firmware boot\r").unwrap_infallible();
-
+    if defaults {
+        let _ = ufmt::uwriteln!(&mut serial, "DEFAULTS\r");
+    }
+    cfg(&mut serial, &run.settings);
     loop {
-        // Worst case: detach the 5-byte DONE mailbox and pop one byte+u32
-        // generation or one loss notice. No assembler, parser or UART TX.
-        // Release bound: 97 cycles = 6.0625 us at 16 MHz.
-        let (done, item) =
-            interrupt::free(|cs| (DONE.borrow(cs).take(), RX.borrow(cs).borrow_mut().pop()));
-        if let Some(position) = done {
-            print_done(&mut serial, position);
+        run.service(&mut serial);
+        let press = interrupt::free(|cs| {
+            inputs(cs, |input| {
+                if input.presses == 0 {
+                    false
+                } else {
+                    input.presses -= 1;
+                    true
+                }
+            })
+        });
+        if press {
+            let (p, a) = snapshots();
+            let command = match button_action(run.activity(&p, &a)) {
+                ButtonAction::Stop => Command::Stop,
+                ButtonAction::Home => Command::Home,
+                ButtonAction::Scan => Command::Scan(None),
+            };
+            dispatch(&mut serial, run, Ok(command), None);
         }
+        let item = interrupt::free(|cs| with_rx(cs, RxBuffer::pop));
         if let Some(item) = item {
             if let Some(line) = assembler.push(item.byte, item.corrupted) {
                 if item.corrupted {
-                    // Notices survive later losses too. Never generation-gate
-                    // them or coalesce two faults during the same recovery.
                     print_error(&mut serial, Error::Line);
                 } else {
                     dispatch(
                         &mut serial,
-                        &mut planner,
+                        run,
                         line.and_then(Command::parse),
-                        item.generation,
+                        Some(item.generation),
                     );
                 }
             }

@@ -1,4 +1,4 @@
-//! Keep ufmt's console path small enough for the Phase 2 flash budget.
+//! Keep ufmt's console path small on the 8-bit AVR.
 
 use turntable_core::decimal::Decimal;
 
@@ -38,4 +38,22 @@ impl ufmt::uDisplay for Number {
         let mut buffer = [0; 11];
         formatter.write_str(self.0.digits(&mut buffer))
     }
+}
+
+/// Share the complete field write, including the temporary decimal adapter.
+/// AVR has few argument registers; constructing it at every field spills RAM
+/// and duplicates code for CFG/STATUS's many numeric values.
+#[inline(never)]
+pub fn unsigned_field<W: ufmt::uWrite>(serial: &mut W, value: u32) {
+    let _ = ufmt::uwrite!(serial, " {}", Number::unsigned(value));
+}
+
+#[inline(never)]
+pub fn signed_field<W: ufmt::uWrite>(serial: &mut W, value: i32) {
+    let _ = ufmt::uwrite!(serial, " {}", Number::signed(value));
+}
+
+#[inline(never)]
+pub fn newline<W: ufmt::uWrite>(serial: &mut W) {
+    let _ = ufmt::uwriteln!(serial, "\r");
 }

@@ -138,8 +138,15 @@ impl Controller {
     /// main might call this just before an interrupt, shortening a nominal
     /// 20 ms delay. The first tick applies the phase and starts the full delay.
     pub fn start(&mut self, steps: i32) -> Result<Output, Error> {
+        self.start_with_period(steps, self.period_ms)
+    }
+
+    pub fn start_with_period(&mut self, steps: i32, period_ms: u8) -> Result<Output, Error> {
         if self.state != State::Idle {
             return Err(Error::Busy);
+        }
+        if period_ms == 0 {
+            return Err(Error::Range);
         }
         Self::checked_destination(self.position, steps)?;
         if steps == 0 {
@@ -155,11 +162,32 @@ impl Controller {
         // unsigned_abs also handles i32::MIN without signed negation overflow;
         // no 64-bit arithmetic is needed anywhere in this controller.
         self.remaining = steps.unsigned_abs();
-        self.active_period_ms = self.period_ms;
+        self.active_period_ms = period_ms;
         self.state = State::Energise;
         // 21 is a sentinel for the first tick; subsequent ticks count 20..1.
         self.ticks_left = ENERGISE_MS + 1;
         Ok(self.output(None))
+    }
+
+    /// Change coordinates only after the homing move has released and settled;
+    /// the retained electrical phase still describes the physical rotor.
+    pub fn set_position(&mut self, position: i32) -> Result<(), Error> {
+        if self.state != State::Idle {
+            return Err(Error::Busy);
+        }
+        Self::checked_destination(position, 0)?;
+        self.position = position;
+        Ok(())
+    }
+
+    /// Enter the existing hold/settle tail without advancing the sequencer.
+    /// Repeated STOPs cannot restart that tail or create a second completion.
+    #[inline(never)]
+    pub fn halt(&mut self) {
+        if matches!(self.state, State::Energise | State::Stepping) {
+            self.state = State::Hold;
+            self.ticks_left = HOLD_MS;
+        }
     }
 
     /// Called exactly once per millisecond. From the first energised output,

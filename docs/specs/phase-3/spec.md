@@ -1,6 +1,6 @@
 # Spec: phase-3
 
-Version: 3
+Version: 4
 Status: suite-ready
 
 ## Problem
@@ -302,8 +302,9 @@ change these without a spec change.
 - P5 `PRATIO 100000` and `1000000` accepted, `99999` and `1000001` → `RANGE`; `ARATIO 100000` and `20000000`
   accepted, `99999` and `20000001` → `RANGE`; `AHOME 0`, `AHOME 5.5`, `AHOME 30` accepted, `AHOME 30.1` and
   `AHOME -0.1` → `RANGE`; `TRIM 0` → `SYNTAX` (no such command).
-- P6 The Phase 2 suite (`turntable-core/src/tests.rs`) passes. Its single change is that `ARM 10` leaves the
-  list of rejected lines, since it is now a valid command.
+- P6 The Phase 2 suite (`turntable-core/src/tests.rs`) passes. It has two changes: `ARM 10` leaves the list of
+  rejected lines, since it is now a valid command, and the round-trip helper `canonical()` gains a catch-all arm
+  for the new `Command` variants, which that test never feeds it.
 
 ### S: settings and EEPROM (host)
 
@@ -463,3 +464,6 @@ change these without a spec change.
   - `STOP` halts console moves too;
   - the arm motor calibrated on the platter's driver (no raw arm-step command);
   - spec location `docs/specs/phase-3/`.
+- 2026-10-26 (v4): the Phase 2 suite's round-trip helper matched every `Command` variant, so it could not compile
+  against the new variants. P6 now names that second change, a catch-all arm. The user chose a hub fix without
+  a re-attack, because the change is in a test helper, not in behaviour.

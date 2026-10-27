@@ -61,6 +61,7 @@ fn canonical(command: Command) -> String {
         Command::Pos => String::from("POS"),
         Command::Speed(n) => format!("SPEED {n}"),
         Command::Status => String::from("STATUS"),
+        other => unreachable!("only Phase 2 commands round-trip here: {other:?}"),
     }
 }
 

@@ -29,3 +29,10 @@ Verification runs and review rounds, without model names; the models that served
     exist yet. `spec.sh ready` protects `tests/phase3.rs` and `src/tests.rs`.
   - Brief note for the implementer: implementing `Iterator for Scan` satisfies the spec's `Scan::next` and clippy's
     `should_implement_trait`; the suite calls `next` in a form that works either way.
+- 2026-10-26: implementation run 1 (route `coding.feature`, 47 min) reported a conflict: the protected Phase 2
+  helper `canonical()` in `src/tests.rs` matches every `Command` variant, so the library tests cannot compile
+  against the spec's new variants (E0004). Confirmed by the hub. With a catch-all arm, on a scratch copy: Phase 2
+  37 passed, Phase 3 32 passed, clippy and fmt clean. The user chose v4: the hub adds the arm, P6 names it, no
+  re-attack. The implementation was set aside so the baseline runs without it.
+- 2026-10-27: spec v4 suite-ready. Baseline without the implementation exits 101 (the interface does not exist);
+  `tests/phase3.rs` is unchanged, `src/tests.rs` gains the catch-all arm.

@@ -1,6 +1,6 @@
 # Spec: phase-3
 
-Version: 4
+Version: 5
 Status: verified
 
 ## Problem
@@ -41,13 +41,14 @@ instead); homing the platter; the SG90.
 |---|---|---|---|
 | Platter ULN2003 IN1..IN4 | D2..D5 | PD2..PD5 | unchanged |
 | Arm ULN2003 IN1..IN4 | D6, D7, D8, D10 | PD6, PD7, PB0, PB2 | D9 stays reserved for the optional servo |
-| Start/stop button | A0 | PC0 | to GND, internal pull-up, closed = low |
+| Start/stop button | A2 | PC2 | to GND, internal pull-up, closed = low (A0 until v5, see Decisions) |
 | Home switch (a push button) | A1 | PC1 | to GND, internal pull-up, closed = low |
 | Activity LED | D13 | PB5 | on while either motor is not `Idle` (moving or settling), as in Phase 2 |
 | Console | D0/D1 | USART0 | 57600 8N1, unchanged |
 
-Free for later: A2, A3, D11, D12 (menu buttons), A4/A5 (I2C display), A6/A7 (analog inputs only). Both ULN2003
-boards take their `+` from the shield's 5 V with ground common to the Nano.
+Free for later: A3, D11, D12 (menu buttons), A4/A5 (I2C display), A6/A7 (analog inputs only). A0 is not used: on
+this board it reads low with nothing connected. Both ULN2003 boards take their `+` from the shield's 5 V with ground
+common to the Nano.
 
 ### Constants
 
@@ -467,3 +468,7 @@ change these without a spec change.
 - 2026-10-26 (v4): the Phase 2 suite's round-trip helper matched every `Command` variant, so it could not compile
   against the new variants. P6 now names that second change, a catch-all arm. The user chose a hub fix without
   a re-attack, because the change is in a test helper, not in behaviour.
+- 2026-10-27 (v5, bench W1): the start/stop button moves from A0 to A2. On this board A0 reads closed at boot with
+  nothing connected (the firmware's pull-up on PC0 is set, checked in the binary), so a press registered at every
+  reset and started `HOME`. The user chose to move the pin; A1 (home switch) works and stays. No test changes: no
+  host test covers the pin table.

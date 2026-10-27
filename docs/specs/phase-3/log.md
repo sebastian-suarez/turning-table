@@ -109,3 +109,14 @@ Verification runs and review rounds, without model names; the models that served
   - F2: `.text` 15324, `.data` 436, `.bss` 150: 15760 ≤ 16384 and 586 ≤ 640.
   - F3: the TC2 ISR, `platter_command`, `apply`, `start_with_period` and the `SPEED` closure are the same opcodes as
     before (bounds 780, 312, 186 hold); the new `SCAN` section is 26 cycles; nothing else changed.
+- 2026-10-27: bench, W1 attempts. Flashed the release build of `6378e37` (avrdude, 15760 bytes verified). Every
+  reset printed an `OK` right after `CFG` with no command sent, then `STATUS` showed the arm searching down and the
+  `STEP`s got `ERR BUSY`: a start/stop press registered at boot and started `HOME`. The home switch on A1 worked
+  (`HOME` then a press on it gave `ADONE 455`). With the A0 wire removed, and then A0 and A1 both disconnected, the
+  press still registered at boot. The binary sets the pull-up on PC0 (`cbi DDRC,0; sbi PORTC,0`) and nothing else
+  writes PORTC, DDRC or DIDR0, so PC0 reads low on this board with nothing wired to it.
+- 2026-10-27: spec v5 at the user's request: the start/stop button moves to A2 (PC2). Firmware: the ISR samples
+  bit 2 and main sets the pull-up on A2; hub edit, no review. `ready.json` re-recorded for v5 with the same tests;
+  its baseline ran on the implemented tree, so it exits 0. F1: core suites unchanged (no core change), firmware
+  Nano and UNO builds, clippy and fmt clean. F2: unchanged (`.text` 15324, `.data` 436, `.bss` 150). F3: the TC2 ISR
+  differs only in `andi r18, 0x01` → `0x04` (bound 780); main differs only in the pull-up bits.

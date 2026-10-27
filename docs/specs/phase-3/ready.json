@@ -1,11 +1,11 @@
 {
   "baseline": {
-    "at": "2026-10-27T00:47:30Z",
+    "at": "2026-10-27T04:00:46Z",
     "command": "cargo test --manifest-path turntable-core/Cargo.toml",
-    "exit_code": 101
+    "exit_code": 0
   },
-  "spec_sha256": "68bdd03ca424603417e7f00532d5e059062e4e96649a2aae666d092716c09ffe",
-  "spec_version": "4",
+  "spec_sha256": "d0e684dbe4a0cb60bab0f92f01d7b7a5da8c7200c18c84ed5f00f3dff59be6c6",
+  "spec_version": "5",
   "tests": {
     "turntable-core/src/tests.rs": "a44a9a35fefe745436cad057fc2dd1b211ad019f18f6433fea074b0f575b8fed",
     "turntable-core/tests/phase3.rs": "788bf06e90af9344f593241661424e678c564fb42fed94d0172d4ec43ea516b3"

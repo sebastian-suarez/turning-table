@@ -130,7 +130,8 @@ fn TIMER2_COMPA() {
                 let pins = unsafe { (*pac::PORTC::ptr()).pinc().read().bits() };
                 let mut input = INPUT.borrow(cs).get();
                 input.ticks = input.ticks.wrapping_add(1);
-                if input.button.sample(pins & 1 == 0) {
+                // Start/stop on A2 (PC2, bit 2): this board's A0 reads low unconnected.
+                if input.button.sample(pins & 4 == 0) {
                     input.presses = input.presses.saturating_add(1);
                 }
                 input.home.sample(pins & 2 == 0);
@@ -668,7 +669,7 @@ fn main() -> ! {
         pins.d10.into_output(),
         pins.d13.into_output(),
     );
-    let _inputs = (pins.a0.into_pull_up_input(), pins.a1.into_pull_up_input());
+    let _inputs = (pins.a2.into_pull_up_input(), pins.a1.into_pull_up_input());
     write_coils(0, 0, false);
     let (settings, defaults) = eeprom::boot();
     // Keep the long-lived runner out of main's AVR stack frame. Accessing

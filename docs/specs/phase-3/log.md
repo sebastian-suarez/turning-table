@@ -36,3 +36,23 @@ Verification runs and review rounds, without model names; the models that served
   re-attack. The implementation was set aside so the baseline runs without it.
 - 2026-10-27: spec v4 suite-ready. Baseline without the implementation exits 101 (the interface does not exist);
   `tests/phase3.rs` is unchanged, `src/tests.rs` gains the catch-all arm.
+- 2026-10-27: implementation run 1 verified by the hub on the v4 base (`--offline` builds).
+  - F1: `turntable-core` `cargo test`: Phase 2 suite 37 passed, Phase 3 suite 32 passed; `clippy --all-targets
+    -D warnings` and `fmt --check` clean. `firmware`: Nano and UNO release builds, `clippy -D warnings` and
+    `fmt --check` clean. `spec.sh check` passes (protected tests untouched).
+  - F2 (Nano release ELF): `.text` 15076, `.data` 434, `.bss` 149, so `.text + .data` = 15510 ≤ 16384 and
+    `.data + .bss` = 583 ≤ 640.
+  - F3, recomputed by the hub with a longest-path counter over `avr-objdump -d` (ATmega328P cycle table, the slower
+    figure for every conditional, callees charged their own bound, panic calls end a path; script and listing in
+    `~/.cache/routing/turning-table/f3/`):
+    - TC2 ISR: 773 cycles for the body (both `Controller::tick` calls at 181, `Controller::halt` at 17, `reti`),
+      plus 4 response and 3 for the vector `jmp`: 780 ≤ 800.
+    - `platter_command`'s accept section: static bound 336, through a path that starts a move in `apply` and then
+      takes the `Stops` commit, which cannot happen (`apply` never starts a move for `Stops`). Per variant:
+      `Next` 312, `Move` 296, `Stops` 169, `Zero` 154; worst 312 ≤ 320.
+    - `SPEED`'s section (two `apply(Speed)` calls): static 520 through `apply`'s move start, which `Speed` never
+      reaches; with the move start excluded, at most 186.
+    - Every other section in main: at most 193 (homing step), 188 (scan start). The whole USART ISR is 135 + 7 =
+      142, its inner section 67.
+    - EEPROM: the strobe is `in SREG; cli; sbi EEMPE; sbi EEPE; out SREG` (6 cycles masked); the `EEPE` waits run
+      with interrupts enabled, unchanged bytes are skipped, every written byte is read back through `EERE`.

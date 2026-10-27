@@ -157,3 +157,7 @@ Verification runs and review rounds, without model names; the models that served
   3000`, `STOP` about 25 s into the turn → `OK`, `DONE 954` (954 × 26 ms = 24.8 s), `END 0`; then `NEXT` →
   `DONE 8192` (two revolutions from the scan's origin: back on the grid). The immediate stop and the pointer
   position after `NEXT` were not reported.
+- 2026-10-27: W8 pass (buttons only, fresh boot). Start/stop → `OK` (`HOME`); start/stop again during the search →
+  `OK` (`STOP`), `ERR HOME`; start/stop → `OK` (`HOME`); home switch → `ADONE 455`; start/stop → `OK`, `ADONE 910`
+  (saved `SCAN 1 36 3000`); start/stop mid-turn → `OK`, `DONE 1051`, `END 0`. Every press followed the button
+  table. Open question to the user: whether the second press (which stopped the first homing) was intended.

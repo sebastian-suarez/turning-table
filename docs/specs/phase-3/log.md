@@ -120,3 +120,7 @@ Verification runs and review rounds, without model names; the models that served
   its baseline ran on the implemented tree, so it exits 0. F1: core suites unchanged (no core change), firmware
   Nano and UNO builds, clippy and fmt clean. F2: unchanged (`.text` 15324, `.data` 436, `.bss` 150). F3: the TC2 ISR
   differs only in `andi r18, 0x01` → `0x04` (bound 780); main differs only in the pull-up bits.
+- 2026-10-27: flashed `4cbf4e4` (start/stop on A2). Reset with nothing on A2: no `OK` at boot.
+- 2026-10-27: W1 pass. Boot: `DEFAULTS`, `CFG 409600 3276800 50 3 36 3000 10 35 60`. `STATUS Idle 2 409600 36 0
+  Idle 0 0 -`; `STEP 512` → `DONE 512` (1.204 s from `OK`), `STEP -512` → `DONE 0`, `NEXT` → `DONE 114`; then
+  `STATUS ... 36 1 Idle 0 0 -`.

@@ -42,6 +42,18 @@ class RunCommandTest(unittest.TestCase):
         self.assertEqual(self.run_command(port, "STEP 10"), "DONE 10")
         self.assertEqual(port.sent, ["STEP 10", "STEP 10"])
 
+    def test_scan_waits_through_move_events_for_end(self):
+        port = FakePort("OK", "ADONE 455", "DONE 4096", "END 1")
+        self.assertEqual(self.run_command(port, "SCAN 1 36 3000"), "END 1")
+
+    def test_home_ends_at_err_home(self):
+        port = FakePort("OK", "ERR HOME")
+        self.assertEqual(self.run_command(port, "HOME"), "ERR HOME")
+
+    def test_arm_waits_for_adone_not_done(self):
+        port = FakePort("DONE 114", "OK", "ADONE 4551")
+        self.assertEqual(self.run_command(port, "ARM 50"), "ADONE 4551")
+
 
 if __name__ == "__main__":
     unittest.main()

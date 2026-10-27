@@ -11,6 +11,8 @@ Examples
   lockstep.py /dev/cu.usbserial-A5069RR4 ZERO "STOPS 36" --repeat 360 NEXT # 10 revolutions of 36 stops
   lockstep.py /dev/cu.usbserial-A5069RR4 --spam-status "ROT 3600"          # time a 10-turn move under STATUS traffic
   lockstep.py /dev/cu.usbserial-A5069RR4 --listen 5                        # just print what the board says
+  lockstep.py /dev/cu.usbserial-A5069RR4 HOME "ARM 50" "ARM 5"             # Phase 3: waits for ADONE (or ERR HOME)
+  lockstep.py /dev/cu.usbserial-A5069RR4 HOME "SCAN 1 36 3000"             # Phase 3: waits through ADONE/DONE for END
 """
 import argparse
 import os
@@ -20,7 +22,15 @@ import termios
 import time
 
 BAUDS = {9600: termios.B9600, 57600: termios.B57600, 115200: termios.B115200}
-MOTION = ("STEP", "ROT", "NEXT")  # commands answered by OK and later by DONE
+# Commands answered by OK and later by a completion line; the wait ends at the first line with one of these prefixes.
+COMPLETION = {
+    "STEP": ("DONE",),
+    "ROT": ("DONE",),
+    "NEXT": ("DONE",),
+    "ARM": ("ADONE",),
+    "HOME": ("ADONE", "ERR HOME"),
+    "SCAN": ("END",),  # a scan prints ADONE/DONE per move on the way; they are printed, not matched
+}
 
 
 class Port:
@@ -82,7 +92,7 @@ def wait_for(port, prefixes, timeout, label):
 
 
 def run_command(port, cmd, move_timeout, retried=False):
-    """Send one command and wait for its reply (and DONE after a move).
+    """Send one command and wait for its reply (and the completion line after a move, see COMPLETION).
 
     Spec v3.3 host rule: ERR LINE (solicited or not) or a reply timeout right after one means the line was
     consumed as the loss-recovery marker; resend the command once. The rule covers the first reply only.
@@ -99,8 +109,8 @@ def run_command(port, cmd, move_timeout, retried=False):
     if reply in (None, "ERR LINE") and not retried:
         print(f"{port.stamp()}  .. line lost on the wire, resending {cmd!r} once")
         return run_command(port, cmd, move_timeout, retried=True)
-    if reply == "OK" and verb in MOTION:
-        reply = wait_for(port, ("DONE",), move_timeout, "DONE")
+    if reply == "OK" and verb in COMPLETION:
+        reply = wait_for(port, COMPLETION[verb], move_timeout, "/".join(COMPLETION[verb]))
     return reply
 
 

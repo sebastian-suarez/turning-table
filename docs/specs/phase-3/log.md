@@ -138,3 +138,10 @@ Verification runs and review rounds, without model names; the models that served
 - 2026-10-27: W3 pass (IN4 on D10). `HOME` with the home switch pressed by hand during the search → `ADONE 455`;
   then `ARM 50`, `ARM 5`, `ARM 50`: the pointer read 5° after homing and after each of the three moves (one motor
   revolution per move at `ARATIO 3276800`), within the ±0.5° reading; no backlash visible on the reversals.
+- 2026-10-27: W4 pass. (a) Nobody pressing: `HOME` → `OK`, `ERR HOME` 29.50 s later (predicted 7282 × 4 ms +
+  171 ms = 29.30 s, × 1.007 for the slow clock = 29.50 s); `STATUS ... Idle -7282 0 -`. (b) Home switch held from
+  the start: `ERR HOME` 2.006 s after `OK` (455 × 4 ms + 171 ms, × 1.007 = 2.005 s), arm lifted to 455, homed 0.
+- 2026-10-27: W5 pass. `AHOME 6` → `OK`, `RINGS 10 40` → `OK`, `CFG 409600 3276800 60 3 36 3000 10 40`. After a
+  USB power cycle: boot without `DEFAULTS`, same `CFG`. After a reflash of the same release ELF (avrdude, the
+  bootloader leaves EEPROM alone): same `CFG`. Restored with `AHOME 5` and `RINGS 10 35 60` → `CFG 409600 3276800 50
+  3 36 3000 10 35 60`.

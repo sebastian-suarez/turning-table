@@ -10,6 +10,7 @@ Examples
   lockstep.py /dev/cu.usbserial-A5069RR4 "SPEED 10" ZERO "STEP 40760"      # one calibration run
   lockstep.py /dev/cu.usbserial-A5069RR4 ZERO "STOPS 36" --repeat 360 NEXT # 10 revolutions of 36 stops
   lockstep.py /dev/cu.usbserial-A5069RR4 --spam-status "ROT 3600"          # time a 10-turn move under STATUS traffic
+  lockstep.py /dev/cu.usbserial-A5069RR4 --spam-status HOME "SCAN 1 36 3000"  # earlier commands run normally first
   lockstep.py /dev/cu.usbserial-A5069RR4 --listen 5                        # just print what the board says
   lockstep.py /dev/cu.usbserial-A5069RR4 HOME "ARM 50" "ARM 5"             # Phase 3: waits for ADONE (or ERR HOME)
   lockstep.py /dev/cu.usbserial-A5069RR4 HOME "SCAN 1 36 3000"             # Phase 3: waits through ADONE/DONE for END
@@ -102,7 +103,7 @@ def run_command(port, cmd, move_timeout, retried=False):
     """
     verb = cmd.split()[0].upper()
     port.send(cmd)
-    if verb in ("POS", "STATUS"):
+    if verb in ("POS", "STATUS", "CFG"):  # queries answer with a line that starts with their own name
         reply = wait_for(port, (verb, "ERR"), 5, verb)
     else:
         reply = wait_for(port, ("OK", "ERR"), 5, "OK/ERR")
@@ -154,7 +155,7 @@ def main():
     ap.add_argument("--baud", type=int, default=57600, choices=sorted(BAUDS))
     ap.add_argument("--repeat", type=int, default=1, help="repeat the LAST command N times (earlier commands run once)")
     ap.add_argument("--move-timeout", type=float, default=900.0, help="seconds to wait for DONE")
-    ap.add_argument("--spam-status", action="store_true", help="send STATUS every --interval while the first command moves")
+    ap.add_argument("--spam-status", action="store_true", help="send STATUS every --interval while the last command moves")
     ap.add_argument("--interval", type=float, default=0.2)
     ap.add_argument("--listen", type=float, default=0.0, help="only print what the board sends for N seconds")
     ap.add_argument("--no-boot-wait", action="store_true", help="do not wait 2 s for the reset banner")
@@ -169,7 +170,10 @@ def main():
     if args.spam_status:
         if not args.commands:
             sys.exit("give the move command, e.g. --spam-status \"ROT 3600\"")
-        spam_status(port, args.commands[0], args.interval, args.move_timeout)
+        for cmd in args.commands[:-1]:  # e.g. HOME before a timed SCAN; only the last command is timed
+            if run_command(port, cmd, args.move_timeout) is None:
+                sys.exit(1)
+        spam_status(port, args.commands[-1], args.interval, args.move_timeout)
         return
     if not args.commands:
         sys.exit("no commands given (or use --listen)")

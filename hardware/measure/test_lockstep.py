@@ -50,6 +50,11 @@ class RunCommandTest(unittest.TestCase):
         port = FakePort("OK", "ERR HOME")
         self.assertEqual(self.run_command(port, "HOME"), "ERR HOME")
 
+    def test_cfg_reply_is_the_cfg_line(self):
+        port = FakePort("CFG 409600 3276800 60 3 36 3000 10 40")
+        self.assertEqual(self.run_command(port, "CFG"), "CFG 409600 3276800 60 3 36 3000 10 40")
+        self.assertEqual(port.sent, ["CFG"])
+
     def test_arm_waits_for_adone_not_done(self):
         port = FakePort("DONE 114", "OK", "ADONE 4551")
         self.assertEqual(self.run_command(port, "ARM 50"), "ADONE 4551")

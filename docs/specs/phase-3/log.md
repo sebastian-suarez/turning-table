@@ -153,3 +153,7 @@ Verification runs and review rounds, without model names; the models that served
   `SCAN 1 36 3000` is now the saved scan.
 - 2026-10-27: W6 pass. Third run with the protractor on the platter motor (D2-D5 driver): `HOME`, `SCAN 1 36 3000`,
   `DONE 4096`, `END 1`, turn 107.411 s again; the pointer went once round and stopped on the start mark (0°).
+- 2026-10-27: W7 pass on the console output (run by the user in `cargo run --release`). `HOME` (switch), `SCAN 1 36
+  3000`, `STOP` about 25 s into the turn → `OK`, `DONE 954` (954 × 26 ms = 24.8 s), `END 0`; then `NEXT` →
+  `DONE 8192` (two revolutions from the scan's origin: back on the grid). The immediate stop and the pointer
+  position after `NEXT` were not reported.

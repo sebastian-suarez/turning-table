@@ -160,3 +160,38 @@ The original SVGs are kept for use with a paper printer. Print both at 100% (no 
 
 Procedure: [`../../docs/phase-2-acceptance.md`](../../docs/phase-2-acceptance.md); the acceptance requirements are
 in `docs/phase-2-spec.md`, section "Hardware acceptance".
+
+## Phase 3 test rig (W9/W10)
+
+A stand that holds the **platter** motor shaft-up and a Ø150 mm test platter pressed onto its shaft, so the scan
+criteria W9 and W10 can run before the Phase 4 rig exists. The phone stays on its tripod. Source:
+[`../cad/test-rig.scad`](../cad/test-rig.scad); `make` in `hardware/cad` exports `rig-base.stl` and
+`rig-platter.stl` here, `make check` checks their bounds and topology, and `make preview` draws
+`rig-assembly.png`.
+
+**Not the Phase 4 platter.** There the platter rides on two 608ZZ bearings; here the motor shaft carries
+everything. Keep the object **light (under about 200 g) and centred** (use the rings), and expect a little wobble
+at the rim.
+
+### Print
+
+PLA, 0.2 mm layers, 0.4 mm nozzle, 3 walls, 4 top and bottom layers, 15-20% infill, no supports. Slice at 100%.
+
+- **Base** (`rig-base.stl`, Ø100 × 24 mm): flat bottom on the bed, as exported.
+- **Platter** (`rig-platter.stl`, Ø150 × 10 mm): its **top face on the bed** and the hub pointing up, as exported:
+  the same orientation as the pointer, whose shaft fit passed. Add a 5 mm brim against warping. The centring
+  rings and cross are cut 0.6 mm into the bed-side face; the notch in the rim marks whole revolutions.
+
+### Assemble
+
+1. With the motor unplugged, drop the platter motor into the base: the can goes through the round pocket, the two
+   ears settle into the shaped recess on top (that stops the motor turning), and the blue wire cover and the cable
+   go out through the slot.
+2. Hold the base and press the platter's hub straight down onto the shaft, flats lined up, until it stops: the
+   shaft tip bottoms in the blind bore, which sets the height and leaves 1.5 mm between the hub and the motor's
+   fixed boss. The same 3.0 mm flat fit and Ø5.3 bore as the pointer; it must not twist on the shaft.
+3. Turn the platter once by hand: it must not touch the base. Plug the motor back into the **platter** driver
+   (D2-D5).
+
+To take it apart, hold the base and pull the platter straight up; push the motor out from underneath through the
+open pocket.

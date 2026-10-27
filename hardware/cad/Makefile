@@ -5,8 +5,10 @@ SCAD_ARGS ?=
 
 SOURCE := protractor.scad
 OUT := ../measure
-STLS := $(OUT)/protractor-disc.stl $(OUT)/pointer.stl $(OUT)/fit-coupon.stl $(OUT)/screws.stl
-PNGS := $(OUT)/protractor-disc.png $(OUT)/pointer.png $(OUT)/pointer-tip.png
+RIG_SOURCE := test-rig.scad
+STLS := $(OUT)/protractor-disc.stl $(OUT)/pointer.stl $(OUT)/fit-coupon.stl $(OUT)/screws.stl \
+	$(OUT)/rig-base.stl $(OUT)/rig-platter.stl
+PNGS := $(OUT)/protractor-disc.png $(OUT)/pointer.png $(OUT)/pointer-tip.png $(OUT)/rig-assembly.png
 STL_FLAGS := --backend=manifold --export-format binstl --hardwarnings
 PNG_FLAGS := --backend=manifold --hardwarnings --projection=o
 
@@ -30,6 +32,13 @@ $(OUT)/screws.stl: $(SOURCE) Makefile | $(OUT)
 $(OUT)/fit-coupon.stl: $(SOURCE) Makefile | $(OUT)
 	$(OPENSCAD) $(STL_FLAGS) $(SCAD_ARGS) -D 'part="coupon"' -o "$@" "$(SOURCE)"
 
+# Phase 3 bench rig (W9/W10): motor stand and Ø150 test platter, each in print orientation.
+$(OUT)/rig-base.stl: $(RIG_SOURCE) Makefile | $(OUT)
+	$(OPENSCAD) $(STL_FLAGS) $(SCAD_ARGS) -D 'part="base"' -o "$@" "$(RIG_SOURCE)"
+
+$(OUT)/rig-platter.stl: $(RIG_SOURCE) Makefile | $(OUT)
+	$(OPENSCAD) $(STL_FLAGS) $(SCAD_ARGS) -D 'part="platter"' -o "$@" "$(RIG_SOURCE)"
+
 # Bounds are the v2.3 acceptance defaults, with a 0.05 mm tolerance. Custom disc
 # diameters can be checked with stl_bounds.py directly and their intended size.
 check: all
@@ -37,6 +46,8 @@ check: all
 	@$(PYTHON) stl_bounds.py --expect-size 100 14 5.9 --expect-min -7 -7 0 $(OUT)/pointer.stl
 	@$(PYTHON) stl_bounds.py --max-size 70 34 8.3 --expect-min -35 -13.3 0 $(OUT)/fit-coupon.stl
 	@$(PYTHON) stl_bounds.py --max-size 64 9 11.4 $(OUT)/screws.stl
+	@$(PYTHON) stl_bounds.py --expect-size 100 99.17 24 --expect-min -50 -49.17 0 $(OUT)/rig-base.stl
+	@$(PYTHON) stl_bounds.py --expect-size 149.96 150 10 --expect-min -75 -75 0 $(OUT)/rig-platter.stl
 	@$(MAKE) --no-print-directory check-screw-fit
 
 preview: $(PNGS)
@@ -55,6 +66,10 @@ $(OUT)/pointer.png: $(SOURCE) Makefile | $(OUT)
 # The last 6 mm show the neck, web and slope meeting the 0.8 mm end face.
 $(OUT)/pointer-tip.png: $(SOURCE) Makefile | $(OUT)
 	$(OPENSCAD) $(PNG_FLAGS) $(SCAD_ARGS) -D 'part="pointer"' -D assembled_view=true --camera=90,0,4.5,90,0,0,16 --imgsize=1200,600 -o "$@" "$(SOURCE)"
+
+# The rig in use, around a stand-in motor, seen from above and to the side.
+$(OUT)/rig-assembly.png: $(RIG_SOURCE) Makefile | $(OUT)
+	$(OPENSCAD) $(PNG_FLAGS) $(SCAD_ARGS) -D 'part="assembly"' --camera=250,-250,180,0,0,0 --viewall --autocenter --imgsize=1200,900 -o "$@" "$(RIG_SOURCE)"
 
 clean:
 	rm -f $(STLS) $(PNGS)

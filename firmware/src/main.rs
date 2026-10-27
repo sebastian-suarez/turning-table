@@ -181,12 +181,6 @@ fn configure_timer(timer: pac::TC2) {
     // TC0 remains available for later timing; TC1 remains free for servo PWM.
 }
 
-fn print_done<W: ufmt::uWrite>(serial: &mut W, position: i32, arm: bool) {
-    let _ = ufmt::uwrite!(serial, "{}DONE", if arm { "A" } else { "" });
-    signed_field(serial, position);
-    newline(serial);
-}
-
 fn print_error<W: ufmt::uWrite>(serial: &mut W, error: Error) {
     let _ = ufmt::uwriteln!(serial, "ERR {}\r", error.as_str());
 }
@@ -245,6 +239,19 @@ struct Run {
 }
 
 impl Run {
+    /// A DONE detached by POS owns the same turn accounting as a serviced DONE.
+    fn done<W: ufmt::uWrite>(&mut self, serial: &mut W, position: i32, arm: bool) {
+        let _ = ufmt::uwrite!(serial, "{}DONE", if arm { "A" } else { "" });
+        signed_field(serial, position);
+        newline(serial);
+        if !arm && self.turning {
+            self.turning = false;
+            if !self.stopping {
+                self.completed += 1;
+            }
+        }
+    }
+
     fn activity(&self, p: &Snapshot, a: &Snapshot) -> Activity {
         Activity {
             platter_idle: p.state == State::Idle,
@@ -280,10 +287,14 @@ impl Run {
                 let _ = interrupt::free(|cs| with_motor(&ARM, cs, |m| m.set_position(position)));
                 self.homed = true;
                 self.homing = None;
-                print_done(serial, position, true);
+                self.done(serial, position, true);
             }
             HomingStep::Failed => {
-                interrupt::free(|cs| inputs(cs, |input| input.armed = false));
+                // Failure must stop travel before removing switch protection.
+                interrupt::free(|cs| {
+                    with_motor(&ARM, cs, Controller::halt);
+                    inputs(cs, |input| input.armed = false);
+                });
                 self.homed = false;
                 self.homing = None;
                 print_error(serial, Error::Home);
@@ -295,27 +306,28 @@ impl Run {
     /// Homing owns its arm event (the backoff is silent); scans expose both.
     #[inline(never)]
     fn service<W: ufmt::uWrite>(&mut self, serial: &mut W) {
-        let p = interrupt::free(|cs| DONE.borrow(cs).take());
-        let a = interrupt::free(|cs| ADONE.borrow(cs).take());
-        if let Some(position) = p {
-            print_done(serial, position, false);
-            if self.turning {
-                self.turning = false;
-                if !self.stopping {
-                    self.completed += 1;
-                }
-            }
+        let (p, a, done, adone) = interrupt::free(|cs| {
+            (
+                with_motor(&MOTION, cs, |m| m.snapshot()),
+                with_motor(&ARM, cs, |m| m.snapshot()),
+                DONE.borrow(cs).take(),
+                ADONE.borrow(cs).take(),
+            )
+        });
+        // Idle and its queued completion are observed together, so a scan
+        // cannot advance or print END before accounting for the preceding DONE.
+        if let Some(position) = done {
+            self.done(serial, position, false);
         }
-        if let Some(position) = a {
+        if let Some(position) = adone {
             if let Some(homing) = &mut self.homing {
                 let halted = interrupt::free(|cs| INPUT.borrow(cs).get().halted);
                 let step = homing.done(switch_closed(), halted);
                 self.home_step(serial, step);
             } else {
-                print_done(serial, position, true);
+                self.done(serial, position, true);
             }
         }
-        let (p, a) = snapshots();
         if p.state != State::Idle || a.state != State::Idle {
             return;
         }
@@ -443,7 +455,7 @@ fn platter_command<W: ufmt::uWrite>(
         (previous, accepted)
     });
     if let Some(position) = previous {
-        print_done(serial, position, arm);
+        run.done(serial, position, arm);
     }
     if let Some((result, _)) = accepted {
         let output = result?;
@@ -457,7 +469,7 @@ fn platter_command<W: ufmt::uWrite>(
             ok(serial);
         }
         if let Some(position) = output.done {
-            print_done(serial, position, arm);
+            run.done(serial, position, arm);
         }
     }
     Ok(())
@@ -474,7 +486,11 @@ fn status<W: ufmt::uWrite>(serial: &mut W, run: &Run, p: &Snapshot, a: &Snapshot
     signed_field(serial, a.position);
     unsigned_field(serial, u32::from(run.homed));
     if run.scan.is_some() {
-        unsigned_field(serial, u32::from(run.completed + 1));
+        // A STOP in the last turn's settle counts that turn before its DONE
+        // and END arrive; clamp so the ring never reads past the scan's last.
+        // settings.scan is the running scan: settings commands are refused now.
+        let ring = (run.completed + 1).min(run.settings.scan.rings);
+        unsigned_field(serial, u32::from(ring));
     } else {
         let _ = ufmt::uwrite!(serial, " -");
     }
@@ -517,6 +533,11 @@ fn execute<W: ufmt::uWrite>(
             if !current(generation) {
                 return Ok(());
             }
+            // Admission saw an idle arm: its old event is stable and belongs
+            // to the preceding move, never to the homing sequence about to start.
+            if let Some(position) = interrupt::free(|cs| ADONE.borrow(cs).take()) {
+                run.done(serial, position, true);
+            }
             run.homed = false;
             run.homing = Some(homing);
             ok(serial);
@@ -530,20 +551,24 @@ fn execute<W: ufmt::uWrite>(
     }
     match command {
         Command::Stop => {
-            // A completed turn counts even if its mailbox arrived while main
-            // parsed STOP. A genuinely halted turn must never increment END.
-            let idle = interrupt::free(|cs| {
-                let idle = with_motor(&MOTION, cs, |m| {
-                    let idle = m.snapshot().state == State::Idle;
+            // Hold/Release/Settle already finished every half-step. Only a
+            // halt in Energise/Stepping excludes this turn from END's count.
+            let completed = interrupt::free(|cs| {
+                let completed = with_motor(&MOTION, cs, |m| {
+                    let completed =
+                        !matches!(m.snapshot().state, State::Energise | State::Stepping);
                     m.halt();
-                    idle
+                    completed
                 });
                 with_motor(&ARM, cs, Controller::halt);
                 inputs(cs, |input| input.armed = false);
-                idle
+                completed
             });
-            if run.turning && idle {
-                run.completed += 1;
+            if run.turning {
+                if completed {
+                    run.completed += 1;
+                }
+                // Repeated STOPs and the eventual DONE cannot count it again.
                 run.turning = false;
             }
             if let Some(homing) = &mut run.homing {
@@ -660,9 +685,14 @@ fn main() -> ! {
         let _ = ufmt::uwriteln!(&mut serial, "DEFAULTS\r");
     }
     cfg(&mut serial, &run.settings);
+    let mut button_busy = false;
     loop {
-        run.service(&mut serial);
+        let (p, a) = snapshots();
+        let mut activity = run.activity(&p, &a);
         let press = interrupt::free(|cs| {
+            // A completion queued on the press tick still belongs to a move.
+            activity.platter_idle &= DONE.borrow(cs).get().is_none();
+            activity.arm_idle &= ADONE.borrow(cs).get().is_none();
             inputs(cs, |input| {
                 if input.presses == 0 {
                     false
@@ -672,15 +702,24 @@ fn main() -> ! {
                 }
             })
         });
+        let action = button_action(activity);
+        let was_busy = button_busy;
+        // service/POS may consume a completion after this poll. Retain busy
+        // through the next poll (and queued presses) so it cannot become START.
+        button_busy = matches!(action, ButtonAction::Stop) || (press && was_busy);
         if press {
-            let (p, a) = snapshots();
-            let command = match button_action(run.activity(&p, &a)) {
-                ButtonAction::Stop => Command::Stop,
-                ButtonAction::Home => Command::Home,
-                ButtonAction::Scan => Command::Scan(None),
+            let command = if was_busy {
+                Command::Stop
+            } else {
+                match action {
+                    ButtonAction::Stop => Command::Stop,
+                    ButtonAction::Home => Command::Home,
+                    ButtonAction::Scan => Command::Scan(None),
+                }
             };
             dispatch(&mut serial, run, Ok(command), None);
         }
+        run.service(&mut serial);
         let item = interrupt::free(|cs| with_rx(cs, RxBuffer::pop));
         if let Some(item) = item {
             if let Some(line) = assembler.push(item.byte, item.corrupted) {
